@@ -27,7 +27,7 @@ The complete HTML, CSS, and JavaScript are written to `dist-pages`. To publish w
 
 The GitHub Pages website connects to the existing n8n API. No local server is required.
 
-The current release supports **file preparation**: select **Prepare file** to generate a workbook from SharePoint and OpenDock. The workbook appears in the review queue for preview and download. It stops there; approval, replacement uploads, and Blue Yonder processing remain paused. Connecting and refreshing only send the `list` and `detail` actions.
+The current release supports **production runs**. Select **Prepare file** to generate a workbook from SharePoint and OpenDock. Review the workbook, then choose **Approve & run** and confirm to start Blue Yonder processing. Choose **Reject** to record a reason and provide a replacement workbook; **Upload & run replacement** validates and starts that file. Connecting, refreshing, previewing, and downloading do not start production.
 
 ### Private access key
 
@@ -35,18 +35,18 @@ Enter the private Wave Bot key supplied separately by the workspace administrato
 
 Never place the key in repository files, GitHub Pages settings, URLs, build variables, or screenshots. Public configuration contains the endpoint address and display mode only.
 
-| Setting            | Purpose                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------- |
-| `apiUrl`           | Existing Wave Bot HTTPS endpoint.                                                         |
-| `authMode`         | `access-key` uses the API's existing bearer authentication.                               |
-| `readOnly`         | Defaults to `true`; keeps approval and production controls disabled.                      |
-| `allowPreparation` | Defaults to `false`; when `true`, permits file preparation while production stays paused. |
+| Setting            | Purpose                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `apiUrl`           | Existing Wave Bot HTTPS endpoint.                                                                  |
+| `authMode`         | `access-key` uses the API's existing bearer authentication.                                        |
+| `readOnly`         | Defaults to `true`; this deployment sets it to `false` to enable approval and production controls. |
+| `allowPreparation` | Defaults to `false`; when `true`, permits file preparation while production stays paused.          |
 
-The shared website key identifies a workspace operator, not an individually verified employee. The API permits this key to read files and prepare a workbook; it rejects approvals and replacement uploads. Frontend settings control the interface, while n8n enforces the website key's permitted actions. The existing local server connection is maintained separately. Before opening production approval to a wider team, use verified individual accounts and server-enforced roles.
+The shared website key identifies a workspace operator, not an individually verified employee. The API permits file preparation, review decisions, and replacement uploads for this key. Frontend settings control the interface, while n8n authenticates requests and validates the file and run state before processing. The existing local server connection is maintained separately. Share the key only with people authorized to approve production runs.
 
 The existing optional `session` mode supports a separately hosted sign-in service with `sessionUrl` and `signInUrl`. Its session endpoint returns `{ "user": { "displayName": "...", "email": "..." } }`. That service must authorize each operation and set the recorded reviewer from its verified session. Update the HTML content security policy when configuring a different service origin.
 
-The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization` and `Content-Type` headers. The file preparation branch finishes by saving the generated workbook for approval; it does not enter the Blue Yonder branch.
+The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization` and `Content-Type` headers. File preparation finishes by saving the generated workbook for approval. A confirmed approval or an accepted replacement enters the existing Blue Yonder branch; a rejection waits for a replacement.
 
 ### Review endpoint
 

@@ -117,6 +117,61 @@ test('file preparation can be enabled without enabling approval or replacement u
   assert.deepEqual(sent, ['generate']);
 });
 
+test('production mode permits review decisions and replacement uploads through the authenticated client', async () => {
+  const production = parseConnection({
+    apiUrl: WAVE_API,
+    authMode: 'access-key',
+    readOnly: false,
+    allowPreparation: true,
+  });
+  const sent = [];
+  const client = createWaveClient(production, {
+    accessKey: 'test-only-key',
+    signal: new AbortController().signal,
+    onUnauthorized: () => {},
+    fetch: async (_url, init) => {
+      assert.equal(init.headers.Authorization, 'Bearer test-only-key');
+      const body = JSON.parse(init.body);
+      sent.push(body.action);
+      return Response.json({
+        runId: body.runId,
+        status: body.action === 'reject' ? 'rejected' : 'running',
+      });
+    },
+  });
+  assert.equal(
+    (await client({ action: 'approve', runId: '123' })).status,
+    'running',
+  );
+  assert.equal(
+    (
+      await client({
+        action: 'reject',
+        runId: '123',
+        reason: 'Use the revised file',
+      })
+    ).status,
+    'rejected',
+  );
+  assert.equal(
+    (
+      await client({
+        action: 'upload',
+        runId: '123',
+        fileName: 'replacement.xlsx',
+        fileBase64: 'UEsDBAo=',
+        sheetName: 'Waves',
+      })
+    ).status,
+    'running',
+  );
+  await assert.rejects(
+    client({ action: 'approve', runId: 'invalid' }),
+    /valid run/,
+  );
+  assert.deepEqual(sent, ['approve', 'reject', 'upload']);
+});
+
 test('expired access clears the session and a disconnected client makes no more requests', async () => {
   const controller = new AbortController();
   let expired = 0,
