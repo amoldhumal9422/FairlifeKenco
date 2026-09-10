@@ -220,6 +220,7 @@ export default function WaveBot({
   signInUrl = '',
   connectionMessage = '',
   readOnly = true,
+  allowPreparation = false,
   onDisconnect,
 }: {
   viewer: string;
@@ -227,6 +228,7 @@ export default function WaveBot({
   signInUrl?: string;
   connectionMessage?: string;
   readOnly?: boolean;
+  allowPreparation?: boolean;
   onDisconnect?: () => void;
 }) {
   const api = request;
@@ -312,7 +314,12 @@ export default function WaveBot({
     };
   }, [active, busy, refresh]);
   async function perform(action: string, extras: Record<string, unknown> = {}) {
-    if (busy || readOnly || !viewer) return;
+    if (
+      busy ||
+      !viewer ||
+      (readOnly && !(action === 'generate' && allowPreparation))
+    )
+      return;
     setBusy(action);
     setError('');
     setNotice('');
@@ -482,7 +489,11 @@ export default function WaveBot({
               <MapPin /> Arizona · AZ02
             </span>
             <span className="environment-label">
-              {readOnly ? 'View only' : 'Production'}
+              {readOnly
+                ? allowPreparation
+                  ? 'File preparation'
+                  : 'View only'
+                : 'Production'}
             </span>
             {viewer && onDisconnect && (
               <Button variant="ghost" onClick={onDisconnect}>
@@ -515,7 +526,7 @@ export default function WaveBot({
               className="primary-action"
               onClick={() => void perform('generate')}
               disabled={
-                readOnly ||
+                (readOnly && !allowPreparation) ||
                 !!busy ||
                 !viewer ||
                 runs.some((r) => r.status === 'generating')
@@ -534,9 +545,9 @@ export default function WaveBot({
           <output className="notice setup">
             <ShieldCheck />
             <span>
-              View-only mode. You can inspect and download files. Preparing
-              files, approving runs, and uploading replacements are paused on
-              this website.
+              {allowPreparation
+                ? 'Prepare a workbook, review its data, and download the Excel file. Approval and Blue Yonder processing are paused.'
+                : 'View-only mode. You can inspect and download files. Preparing files, approving runs, and uploading replacements are paused on this website.'}
             </span>
           </output>
         )}

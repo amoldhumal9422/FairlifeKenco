@@ -7,6 +7,7 @@ export type Connection = {
   sessionUrl: string;
   signInUrl: string;
   readOnly: boolean;
+  allowPreparation: boolean;
 };
 
 export class AccessError extends Error {}
@@ -34,6 +35,7 @@ export function parseConnection(value: unknown): Connection {
     sessionUrl: endpoint(config.sessionUrl),
     signInUrl: endpoint(config.signInUrl),
     readOnly: config.readOnly !== false,
+    allowPreparation: config.allowPreparation === true,
   } satisfies Connection;
   if (!connection.apiUrl || (authMode === 'session' && !connection.sessionUrl))
     throw new Error('The production connection is not configured.');
@@ -72,7 +74,11 @@ export function createWaveClient(
       throw new AccessError('Connect again to view this workspace.');
     if (typeof body.action !== 'string' || !actions.has(body.action))
       throw new Error('This action is not supported.');
-    if (connection.readOnly && !readActions.has(body.action))
+    if (
+      connection.readOnly &&
+      !readActions.has(body.action) &&
+      !(body.action === 'generate' && connection.allowPreparation)
+    )
       throw new Error(
         'This website is in view-only mode. Production actions are paused.',
       );

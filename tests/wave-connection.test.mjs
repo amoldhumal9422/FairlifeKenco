@@ -79,6 +79,44 @@ test('view-only mode blocks every write before it reaches n8n', async () => {
   assert.equal(calls, 0);
 });
 
+test('file preparation can be enabled without enabling approval or replacement uploads', async () => {
+  assert.equal(config.allowPreparation, false);
+  assert.equal(
+    parseConnection({
+      apiUrl: WAVE_API,
+      authMode: 'access-key',
+      allowPreparation: 'true',
+    }).allowPreparation,
+    false,
+  );
+  const preparing = parseConnection({
+    apiUrl: WAVE_API,
+    authMode: 'access-key',
+    readOnly: true,
+    allowPreparation: true,
+  });
+  const sent = [];
+  const client = createWaveClient(preparing, {
+    accessKey: 'test-only-key',
+    signal: new AbortController().signal,
+    onUnauthorized: () => {},
+    fetch: async (_url, init) => {
+      sent.push(JSON.parse(init.body).action);
+      return Response.json(
+        { runId: '123', status: 'generating' },
+        { status: 202 },
+      );
+    },
+  });
+  assert.equal((await client({ action: 'generate' })).runId, '123');
+  for (const action of ['approve', 'reject', 'upload'])
+    await assert.rejects(
+      client({ action, runId: '123' }),
+      /Production actions are paused/,
+    );
+  assert.deepEqual(sent, ['generate']);
+});
+
 test('expired access clears the session and a disconnected client makes no more requests', async () => {
   const controller = new AbortController();
   let expired = 0,

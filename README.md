@@ -27,7 +27,7 @@ The complete HTML, CSS, and JavaScript are written to `dist-pages`. To publish w
 
 The GitHub Pages website connects to the existing n8n API. No local server is required.
 
-The current release is **view only**: it reads run history, previews workbooks, and downloads files. File preparation, decisions, and replacement uploads are paused on this website. Connecting and refreshing only send the `list` and `detail` actions.
+The current release supports **file preparation**: select **Prepare file** to generate a workbook from SharePoint and OpenDock. The workbook appears in the review queue for preview and download. It stops there; approval, replacement uploads, and Blue Yonder processing remain paused. Connecting and refreshing only send the `list` and `detail` actions.
 
 ### Private access key
 
@@ -35,17 +35,18 @@ Enter the private Wave Bot key supplied separately by the workspace administrato
 
 Never place the key in repository files, GitHub Pages settings, URLs, build variables, or screenshots. Public configuration contains the endpoint address and display mode only.
 
-| Setting    | Purpose                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| `apiUrl`   | Existing Wave Bot HTTPS endpoint.                                                                 |
-| `authMode` | `access-key` uses the API's existing bearer authentication.                                       |
-| `readOnly` | Defaults to `true`; blocks write requests in the website client and disables production controls. |
+| Setting            | Purpose                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| `apiUrl`           | Existing Wave Bot HTTPS endpoint.                                                         |
+| `authMode`         | `access-key` uses the API's existing bearer authentication.                               |
+| `readOnly`         | Defaults to `true`; keeps approval and production controls disabled.                      |
+| `allowPreparation` | Defaults to `false`; when `true`, permits file preparation while production stays paused. |
 
-The shared key identifies a workspace operator, not an individually verified employee. It retains the permissions assigned to it by the existing API. View-only mode is a website behavior setting, **not a new server permission or a lock on the n8n workflow**. Restrict the key to trusted administrators. Before opening production approval to a wider team, use verified individual accounts and server-enforced roles.
+The shared website key identifies a workspace operator, not an individually verified employee. The API permits this key to read files and prepare a workbook; it rejects approvals and replacement uploads. Frontend settings control the interface, while n8n enforces the website key's permitted actions. The existing local server connection is maintained separately. Before opening production approval to a wider team, use verified individual accounts and server-enforced roles.
 
 The existing optional `session` mode supports a separately hosted sign-in service with `sessionUrl` and `signInUrl`. Its session endpoint returns `{ "user": { "displayName": "...", "email": "..." } }`. That service must authorize each operation and set the recorded reviewer from its verified session. Update the HTML content security policy when configuring a different service origin.
 
-The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization` and `Content-Type` headers. Existing workflows and their authentication are maintained separately; this website release does not edit or start them.
+The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization` and `Content-Type` headers. The file preparation branch finishes by saving the generated workbook for approval; it does not enter the Blue Yonder branch.
 
 ### Review endpoint
 

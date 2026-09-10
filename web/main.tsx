@@ -148,6 +148,7 @@ function App() {
         viewer={session.viewer}
         request={session.request}
         readOnly={connection.readOnly}
+        allowPreparation={connection.allowPreparation}
         onDisconnect={() => disconnect()}
       />
     );
@@ -168,7 +169,9 @@ function App() {
         </p>
         {connection?.readOnly && (
           <div className="access-mode">
-            View-only mode · Production actions are paused
+            {connection.allowPreparation
+              ? 'File preparation enabled · Blue Yonder paused'
+              : 'View-only mode · Production actions are paused'}
           </div>
         )}
         {connection?.authMode === 'access-key' && (
