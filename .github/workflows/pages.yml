@@ -28,8 +28,9 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - run: npm ci
-      - run: npm run test:metrics
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
       - run: npm run build:pages
       - uses: actions/upload-pages-artifact@v4
         with:

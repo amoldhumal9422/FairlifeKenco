@@ -23,36 +23,29 @@ npm run build
 
 The complete HTML, CSS, and JavaScript are written to `dist-pages`. To publish without a build step, upload the contents of that folder to a repository and choose **Deploy from a branch**, `main`, `/ (root)` in Pages settings. Relative asset paths support both repository pages and custom domains.
 
-## Connect your backend
+## Workspace connection
 
-This package contains the website frontend. Authentication and production operations require a separately hosted backend. Until it is configured, the site displays a connection notice and disables production controls.
+The GitHub Pages website connects to the existing n8n API. No local server is required.
 
-Set the public addresses in `public/wave-bot.config.json`, then rebuild. For an already-built site, edit `dist-pages/wave-bot.config.json` directly.
+The current release is **view only**: it reads run history, previews workbooks, and downloads files. File preparation, decisions, and replacement uploads are paused on this website. Connecting and refreshing only send the `list` and `detail` actions.
 
-| Setting | Purpose |
-| --- | --- |
-| `apiUrl` | HTTPS backend endpoint for review actions. |
-| `sessionUrl` | HTTPS endpoint for the signed-in user's session. |
-| `signInUrl` | Your sign-in page, configured to return to this website. |
+### Private access key
 
-These settings contain addresses only. Keep passwords and n8n credentials on the backend. Do not point the frontend directly at a webhook that requires a shared secret.
+Enter the private Wave Bot key supplied separately by the workspace administrator. The website holds it in memory for the current tab, sends it only to the configured Wave Bot endpoint over HTTPS, and clears it when you disconnect or reload. Rejected or expired credentials disconnect the dashboard and clear its displayed data.
 
-The frontend sends authenticated requests using cookies. The backend must validate the session, authorize each operation, allow the exact website origin, and support the chosen authentication method in your team's browsers. Each recorded reviewer must come from the verified backend session rather than a client-supplied name.
+Never place the key in repository files, GitHub Pages settings, URLs, build variables, or screenshots. Public configuration contains the endpoint address and display mode only.
 
-### Session endpoint
+| Setting    | Purpose                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| `apiUrl`   | Existing Wave Bot HTTPS endpoint.                                                                 |
+| `authMode` | `access-key` uses the API's existing bearer authentication.                                       |
+| `readOnly` | Defaults to `true`; blocks write requests in the website client and disables production controls. |
 
-`GET sessionUrl` returns:
+The shared key identifies a workspace operator, not an individually verified employee. It retains the permissions assigned to it by the existing API. View-only mode is a website behavior setting, **not a new server permission or a lock on the n8n workflow**. Restrict the key to trusted administrators. Before opening production approval to a wider team, use verified individual accounts and server-enforced roles.
 
-```json
-{
-  "user": {
-    "displayName": "Reviewer",
-    "email": "reviewer@example.com"
-  }
-}
-```
+The existing optional `session` mode supports a separately hosted sign-in service with `sessionUrl` and `signInUrl`. Its session endpoint returns `{ "user": { "displayName": "...", "email": "..." } }`. That service must authorize each operation and set the recorded reviewer from its verified session. Update the HTML content security policy when configuring a different service origin.
 
-Unauthenticated or unauthorized requests return `401` or `403`.
+The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization` and `Content-Type` headers. Existing workflows and their authentication are maintained separately; this website release does not edit or start them.
 
 ### Review endpoint
 
@@ -80,6 +73,6 @@ The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected d
 
 ```sh
 npm run check
-npm run test:metrics
+npm test
 npm run build
 ```

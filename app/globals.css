@@ -2,6 +2,124 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+.access-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(ellipse at 20% 0%, #21443c66, transparent 60%), #101214;
+}
+.access-card {
+  width: min(100%, 480px);
+  padding: 40px;
+  background: #191c20;
+  border: 1px solid #343b40;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px #0005;
+}
+.access-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 48px;
+}
+.access-brand > svg {
+  width: 42px;
+  height: 42px;
+  color: #62dfc5;
+}
+.access-brand > span {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.access-brand small {
+  display: block;
+  color: #a2adb5;
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 5px;
+}
+.access-eyebrow {
+  color: #62dfc5;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+}
+.access-card h1 {
+  font-size: clamp(30px, 6vw, 38px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  margin: 10px 0;
+  line-height: 1.15;
+}
+.access-card > p {
+  color: #a2adb5;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.access-mode {
+  color: #b5ded2;
+  background: #62dfc50b;
+  border: 1px solid #62dfc525;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  margin: 22px 0;
+}
+.access-card form {
+  margin-top: 26px;
+}
+.access-card label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.access-card input {
+  height: 44px;
+}
+.access-card .access-help {
+  color: #95a1ac;
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 10px 0 22px;
+}
+.access-card form button {
+  width: 100%;
+  height: 44px;
+}
+.access-card .access-message {
+  color: #f0c28e;
+  font-size: 12px;
+  margin-top: 18px;
+}
+.access-card footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  border-top: 1px solid #2b3036;
+  padding-top: 22px;
+  margin-top: 36px;
+  font-size: 10px;
+  color: #95a1ac;
+}
+.access-sign-in {
+  display: block;
+  background: #62dfc5;
+  color: #10221e;
+  padding: 12px;
+  border-radius: 6px;
+  text-align: center;
+  margin-top: 20px;
+}
+@media (max-width: 500px) {
+  .access-card {
+    padding: 28px 24px;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

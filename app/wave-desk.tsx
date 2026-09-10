@@ -219,11 +219,15 @@ export default function WaveBot({
   request = defaultApi,
   signInUrl = '',
   connectionMessage = '',
+  readOnly = true,
+  onDisconnect,
 }: {
   viewer: string;
   request?: ApiClient;
   signInUrl?: string;
   connectionMessage?: string;
+  readOnly?: boolean;
+  onDisconnect?: () => void;
 }) {
   const api = request;
   const [runs, setRuns] = useState<Run[]>([]),
@@ -308,7 +312,7 @@ export default function WaveBot({
     };
   }, [active, busy, refresh]);
   async function perform(action: string, extras: Record<string, unknown> = {}) {
-    if (busy) return;
+    if (busy || readOnly || !viewer) return;
     setBusy(action);
     setError('');
     setNotice('');
@@ -353,7 +357,7 @@ export default function WaveBot({
     }
   }
   async function upload() {
-    if (!replacement || !selected) return;
+    if (readOnly || !viewer || !replacement || !selected) return;
     if (
       replacement.size > 2 * 1024 * 1024 ||
       !replacement.name.toLowerCase().endsWith('.xlsx')
@@ -477,7 +481,14 @@ export default function WaveBot({
             <span className="facility-chip">
               <MapPin /> Arizona · AZ02
             </span>
-            <span className="environment-label">Production</span>
+            <span className="environment-label">
+              {readOnly ? 'View only' : 'Production'}
+            </span>
+            {viewer && onDisconnect && (
+              <Button variant="ghost" onClick={onDisconnect}>
+                Disconnect
+              </Button>
+            )}
           </div>
         </header>
         <div className="page-heading">
@@ -504,7 +515,10 @@ export default function WaveBot({
               className="primary-action"
               onClick={() => void perform('generate')}
               disabled={
-                !!busy || !viewer || runs.some((r) => r.status === 'generating')
+                readOnly ||
+                !!busy ||
+                !viewer ||
+                runs.some((r) => r.status === 'generating')
               }
             >
               {busy === 'generate' ? (
@@ -516,6 +530,16 @@ export default function WaveBot({
             </Button>
           </div>
         </div>
+        {readOnly && viewer && (
+          <output className="notice setup">
+            <ShieldCheck />
+            <span>
+              View-only mode. You can inspect and download files. Preparing
+              files, approving runs, and uploading replacements are paused on
+              this website.
+            </span>
+          </output>
+        )}
         {!viewer && (
           <div className={'notice ' + (connectionMessage ? 'setup' : '')}>
             <ShieldCheck />
@@ -794,13 +818,13 @@ export default function WaveBot({
                           <Button
                             variant="outline"
                             onClick={() => setDecision('reject')}
-                            disabled={!!busy}
+                            disabled={readOnly || !!busy}
                           >
                             <X /> Reject
                           </Button>
                           <Button
                             onClick={() => setDecision('approve')}
-                            disabled={!!busy}
+                            disabled={readOnly || !!busy}
                           >
                             <Check /> Approve & run
                           </Button>
@@ -835,7 +859,7 @@ export default function WaveBot({
                           onChange={(e) =>
                             setReplacement(e.target.files?.[0] || null)
                           }
-                          disabled={!!busy}
+                          disabled={readOnly || !!busy}
                         />
                       </label>
                       <label htmlFor="replacement-worksheet">
@@ -845,7 +869,7 @@ export default function WaveBot({
                           value={sheetName}
                           onChange={(e) => setSheetName(e.target.value)}
                           maxLength={31}
-                          disabled={!!busy}
+                          disabled={readOnly || !!busy}
                         />
                       </label>
                     </div>
@@ -855,7 +879,12 @@ export default function WaveBot({
                       </span>
                       <Button
                         onClick={() => void upload()}
-                        disabled={!!busy || !replacement || !sheetName.trim()}
+                        disabled={
+                          readOnly ||
+                          !!busy ||
+                          !replacement ||
+                          !sheetName.trim()
+                        }
                       >
                         {busy === 'upload' || busy === 'reading' ? (
                           <LoaderCircle className="spin" />
@@ -1278,7 +1307,9 @@ export default function WaveBot({
             </Button>
             <Button
               onClick={() => void perform(decision || 'approve', { reason })}
-              disabled={!!busy || (decision === 'reject' && !reason.trim())}
+              disabled={
+                readOnly || !!busy || (decision === 'reject' && !reason.trim())
+              }
             >
               {busy ? (
                 <LoaderCircle className="spin" />

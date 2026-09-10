@@ -1,5 +1,5 @@
 {
-  "apiUrl": "",
-  "sessionUrl": "",
-  "signInUrl": ""
+  "apiUrl": "https://amoldhumal.app.n8n.cloud/webhook/fairlife-wave-desk-api",
+  "authMode": "access-key",
+  "readOnly": true
 }
