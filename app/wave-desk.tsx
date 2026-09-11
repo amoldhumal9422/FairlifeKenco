@@ -1179,7 +1179,11 @@ export default function WaveBot({
                                 </TableCell>
                                 <TableCell>{row.allocation}</TableCell>
                                 <TableCell>
-                                  {row.previousWave}
+                                  Saved wave: {row.intendedWave}
+                                  <br />
+                                  Shipment: {row.shipment}
+                                  <br />
+                                  Previous: {row.previousWave}
                                   <br />
                                   {row.previousAppointment}
                                   {!!row.previousAppointmentStart && (
@@ -1197,6 +1201,14 @@ export default function WaveBot({
                                   {row.details}
                                 </TableCell>
                                 <TableCell className="result-notes">
+                                  Wave created: {row.waveCreated}
+                                  <br />
+                                  Wave reused: {row.waveReused}
+                                  <br />
+                                  Wave linked: {row.waveLinked}
+                                  <br />
+                                  Appointment moved: {row.appointmentMoved}
+                                  <br />
                                   Wave deleted: {row.waveDeleted}
                                   <br />
                                   Appointment deleted: {row.appointmentDeleted}
@@ -1206,7 +1218,7 @@ export default function WaveBot({
                                   {!!row.newAppointment && (
                                     <>
                                       <br />
-                                      New appointment: {row.newAppointment}
+                                      Appointment ID: {row.newAppointment}
                                     </>
                                   )}
                                 </TableCell>
@@ -1239,6 +1251,25 @@ export default function WaveBot({
                                 {attempt.repairBy}
                               </p>
                               <p>{attempt.recoveryNote}</p>
+                              {!!attempt.intendedWave && (
+                                <p>
+                                  Saved wave: {attempt.intendedWave} · Shipment:{' '}
+                                  {attempt.shipmentId}
+                                  <br />
+                                  Wave created:{' '}
+                                  {attempt.waveCreated === true
+                                    ? 'Yes'
+                                    : 'Not confirmed'}{' '}
+                                  · Wave linked:{' '}
+                                  {attempt.waveLinked === true
+                                    ? 'Yes'
+                                    : 'Not confirmed'}{' '}
+                                  · Appointment moved:{' '}
+                                  {attempt.appointmentMoved === true
+                                    ? 'Yes'
+                                    : 'Not confirmed'}
+                                </p>
+                              )}
                             </div>
                           ),
                         )}
@@ -1599,10 +1630,10 @@ export default function WaveBot({
         <DialogContent className="decision-dialog" showCloseButton={!busy}>
           <DialogTitle>Repair this appointment in Blue Yonder?</DialogTitle>
           <DialogDescription>
-            This changes production records after checking the current
-            allocation. An eligible unallocated wave and its old appointment
-            will be deleted, then a replacement appointment will be created.
-            Allocated waves stay unchanged.
+            This changes production records after checking allocation and
+            ownership. The saved wave is created if missing, or reused if it
+            already belongs to this load and shipment. An old unallocated wave
+            with a different name is replaced. Allocated waves stay unchanged.
           </DialogDescription>
           <div className="decision-file">
             <Truck />
@@ -1611,15 +1642,19 @@ export default function WaveBot({
                 Load {repair?.row.carMoveId} · Order {repair?.row.ordnum}
               </strong>
               <span>
+                Wave: {repair?.row.schbat} · Shipment: {repair?.row.shipmentId}
+              </span>
+              <span>
                 {time(String(repair?.row.startIso || ''))} to{' '}
                 {time(String(repair?.row.endIso || ''))} · Arizona
               </span>
             </div>
           </div>
           <p>
-            The saved file sets the requested time. If the appointment already
-            matches, it stays unchanged. This action does not recreate the wave
-            or rerun the workbook.
+            Once the wave and shipment link are verified, the existing
+            appointment moves to the saved date, time and slot. Its appointment
+            ID is kept. If the time already matches, no appointment update is
+            sent.
           </p>
           <p>
             If a change cannot be confirmed, the repair stops for manual review.

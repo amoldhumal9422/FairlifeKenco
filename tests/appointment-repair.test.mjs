@@ -6,8 +6,8 @@ import {
   applyRepairResponse,
   repairSummary,
 } from '../workflow/appointment-repair.js';
-
 const now = Date.parse('2030-01-01T12:00:00Z');
+const base = 'https://bf56-kms-wms-web-pr9.jdadelivers.com/data/WM/wm';
 const row = {
   carMoveId: 'LOAD-1',
   ordnum: 'ORDER-1',
@@ -18,6 +18,8 @@ const row = {
   startIso: '2030-01-02T10:00:00-07:00',
   endIso: '2030-01-02T12:00:00-07:00',
   appointmentConflict: true,
+  schbat: 'WAVE-1',
+  shipmentId: 'SHIP-1',
 };
 const run = () => ({
   runId: '123',
@@ -35,32 +37,16 @@ const request = () => ({
   confirm: true,
   actor: 'Operator',
 });
-const base = 'https://bf56-kms-wms-web-pr9.jdadelivers.com/data/WM/wm';
-const wave = () => ({
-  waveNumber: 'WAVE-1',
-  resourceId: 'WAVE-1',
-  warehouseId: 'AZ02',
-  waveStatus: 'PLAN',
-  pickQuantity: null,
-  pickedQuantity: null,
-  actualLpnPicks: null,
-  actualSubLpnPicks: null,
-  actualDetailLpnPicks: null,
-  totalShipmentsStaged: 0,
-  pickCount: 0,
-  loadCount: 1,
-  replCount: 0,
-  xdkCount: 0,
-  dateLastModified: '2030-01-01T10:00:00Z',
-  picks_uri: base + '/waves/WAVE-1/picks',
-  loads_uri: base + '/waves/WAVE-1/outboundLoads',
-});
 const load = () => ({
   resourceId: 'LOAD-1',
   carrierMoveId: 'LOAD-1',
   warehouseId: 'AZ02',
   appointmentId: 'APP-OLD',
   waves_uri: base + '/outboundLoads/LOAD-1/waves',
+  close: 0,
+  dispatch: 0,
+  isLoading: 0,
+  loaded: 0,
 });
 const app = () => ({
   resourceId: 'APP-OLD',
@@ -78,170 +64,314 @@ const app = () => ({
   trailerCheckedIn: false,
   advancedAllocation: false,
   version: 1,
+  externalAppointmentId: 'KEEP-ME',
+  noteText: 'Existing appointment note',
+});
+const shipment = () => ({
+  resourceId: 'SHIP-1',
+  shipmentId: 'SHIP-1',
+  warehouseId: 'AZ02',
+  carrierMoveId: 'LOAD-1',
+});
+const wave = (name = 'WAVE-1') => ({
+  waveNumber: name,
+  resourceId: name,
+  warehouseId: 'AZ02',
+  waveStatus: 'PLAN',
+  pickQuantity: null,
+  pickedQuantity: null,
+  actualLpnPicks: null,
+  actualSubLpnPicks: null,
+  actualDetailLpnPicks: null,
+  totalShipmentsStaged: 0,
+  pickCount: 0,
+  loadCount: 1,
+  totalShipments: 1,
+  replCount: 0,
+  xdkCount: 0,
+  dateLastModified: '2030-01-01T10:00:00Z',
+  picks_uri: base + '/waves/' + encodeURIComponent(name) + '/picks',
+  loads_uri: base + '/waves/' + encodeURIComponent(name) + '/outboundLoads',
 });
 const response = (data, statusCode = 200) => ({
   statusCode,
-  body: JSON.stringify({
-    data,
-    ...(Array.isArray(data) ? { totalCount: data.length } : {}),
-  }),
+  body: { data, ...(Array.isArray(data) ? { totalCount: data.length } : {}) },
 });
-function advance(s, data, status = 200) {
-  return applyRepairResponse(planRepair(s, now), response(data, status), now);
+function simulate({
+  existing = null,
+  appointment = app(),
+  overrides = {},
+  savedRow = row,
+} = {}) {
+  let s = startRepair(
+    {
+      ...run(),
+      summaryJson: JSON.stringify({
+        processed: 1,
+        failed: 1,
+        results: [savedRow],
+      }),
+    },
+    request(),
+    now,
+  );
+  let currentWave = existing,
+    currentAppointment = appointment;
+  const requests = [],
+    visited = [];
+  const association = () =>
+    currentWave ? [{ waveNumber: currentWave, warehouseId: null }] : [];
+  for (let i = 0; s.phase !== 'done' && i < 150; i++) {
+    s = planRepair(s, now);
+    if (s.phase === 'done') break;
+    const phase = s.phase;
+    visited.push(phase);
+    requests.push({ phase, ...s.request });
+    let result;
+    if (overrides[phase])
+      result = overrides[phase]({
+        s,
+        requests,
+        visited,
+        wave: currentWave,
+        appointment: currentAppointment,
+      });
+    if (result === undefined) {
+      switch (phase) {
+        case 'load':
+        case 'recheckLoad':
+        case 'verifyMovedLoad':
+          result = response([load()]);
+          break;
+        case 'appointment':
+        case 'recheckAppointment':
+        case 'verifyMovedAppointment':
+          result = response(currentAppointment);
+          break;
+        case 'waves':
+        case 'recheckWaves':
+        case 'verifyWavesGone':
+        case 'verifyCreatedWaves':
+        case 'verifyFinalWaves':
+        case 'shipmentWaves':
+        case 'recheckShipmentWaves':
+        case 'verifyFinalShipmentWaves':
+          result = response(association());
+          break;
+        case 'targetName':
+        case 'recheckTargetName':
+          result = response(
+            currentWave === savedRow.schbat ? [wave(currentWave)] : [],
+          );
+          break;
+        case 'wave':
+        case 'recheckWave':
+          result = response(wave(currentWave));
+          break;
+        case 'waveLoads':
+          result = response([load()]);
+          break;
+        case 'picks':
+        case 'loadPicks':
+        case 'recheckPicks':
+        case 'recheckLoadPicks':
+          result = response([]);
+          break;
+        case 'shipment':
+        case 'recheckShipment':
+          result = response(shipment());
+          break;
+        case 'wavableLines':
+          result = response([
+            { shipmentId: 'SHIP-1', shipmentLineId: 'LINE-1' },
+          ]);
+          break;
+        case 'cancelWave':
+          result = response(
+            {
+              asynchronousResources_uri:
+                base + '/waves/cancelWave/async/TASK/resources',
+            },
+            202,
+          );
+          break;
+        case 'pollWave':
+          currentWave = null;
+          result = response([{ asynchronousStatus: 'COMPLETE' }]);
+          break;
+        case 'createWave':
+          result = response(
+            {
+              asynchronousResources_uri:
+                base + '/waves/planWave/async/TASK/resources',
+            },
+            202,
+          );
+          break;
+        case 'pollCreateWave':
+          currentWave = savedRow.schbat;
+          result = response([{ asynchronousStatus: 'COMPLETE' }]);
+          break;
+        case 'moveAppointment':
+          currentAppointment = { ...currentAppointment, ...s.request.body };
+          result = { statusCode: 204 };
+          break;
+        default:
+          throw new Error('Unhandled fixture phase ' + phase);
+      }
+    }
+    s = applyRepairResponse(s, result, now);
+  }
+  assert.equal(
+    s.phase,
+    'done',
+    'Every simulated run must finish within its request limit',
+  );
+  return {
+    s,
+    requests,
+    visited,
+    writes: requests.filter((r) => r.method !== 'GET'),
+  };
 }
-function eligible() {
-  let s = startRepair(run(), request(), now);
-  s = advance(s, [load()]);
-  s = advance(s, app());
-  s = advance(s, [wave()]);
-  s = advance(s, wave());
-  s = advance(s, [load()]);
-  s = advance(s, []);
-  s = advance(s, wave());
-  s = advance(s, app());
-  return advance(s, [load()]);
+function unchanged(result) {
+  assert.equal(result.writes.length, 0);
+  assert.equal(result.s.audit.repairWriteAttempted, false);
+  assert.equal(result.s.audit.appointmentMoved, false);
+  assert.equal(result.s.audit.waveCreated, false);
 }
 
-test('repair requires explicit confirmation and a current stored outbound conflict', () => {
-  assert.throws(
-    () => startRepair(run(), { ...request(), confirm: false }, now),
-    /confirm/i,
+test('a missing linked wave is created with the saved name and shipment before the appointment moves', () => {
+  const { s, writes, visited } = simulate();
+  assert.deepEqual(
+    writes.map((r) => r.phase),
+    ['createWave', 'moveAppointment'],
   );
-  assert.throws(
-    () => startRepair(run(), { ...request(), load: 'ANOTHER' }, now),
-    /changed|match/i,
+  assert.deepEqual(writes[0].body, {
+    shipmentList: "'SHIP-1'",
+    dtlFlg: 0,
+    warehouseId: 'AZ02',
+    waveNumber: 'WAVE-1',
+    waveSet: '',
+  });
+  assert.match(writes[0].url, /car_move_id=LOAD-1/);
+  assert(
+    visited.indexOf('verifyCreatedWaves') < visited.indexOf('moveAppointment'),
   );
-  assert.throws(
-    () => startRepair(run(), { ...request(), expectedUpdatedAt: 'stale' }, now),
-    /refresh|changed/i,
+  assert(
+    visited.lastIndexOf('recheckShipmentWaves') <
+      visited.indexOf('moveAppointment'),
   );
-  assert.throws(
-    () => startRepair({ ...run(), status: 'running' }, request(), now),
-    /finish|running/i,
-  );
-  const r = run();
-  r.summaryJson = JSON.stringify({ results: [{ ...row, direction: 'IB' }] });
-  assert.throws(() => startRepair(r, request(), now), /outbound/i);
-  assert.throws(
-    () => startRepair(run(), request(), Date.parse('2030-01-03T12:00:00Z')),
-    /past|future/i,
-  );
+  assert.equal(writes[1].method, 'PUT');
+  assert.match(writes[1].url, /appointments\/APP-OLD\?ignoreWarnings=false/);
+  assert.equal(writes[1].body.startDate, row.startIso);
+  assert.equal(writes[1].body.endDate, row.endIso);
+  assert.equal(writes[1].body.externalAppointmentId, 'KEEP-ME');
+  assert.equal(writes[1].body.noteText, 'Existing appointment note');
+  assert.equal(s.audit.waveCreated, true);
+  assert.equal(s.audit.waveLinked, true);
+  assert.equal(s.audit.appointmentMoved, true);
+  assert.equal(s.audit.appointmentId, 'APP-OLD');
+  assert.equal(s.audit.appointmentDeleted, false);
+  assert.equal(s.audit.appointmentRecreated, false);
+  const summary = repairSummary(s);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.results[0].ok, undefined);
+  assert.equal(summary.results[0].manualReviewRequired, true);
+  assert.equal(summary.appointmentRepairs[0].intendedWave, 'WAVE-1');
 });
-test('allocated and unknown wave states cannot reach a write request', () => {
-  for (const status of ['ALOC', 'AINP', 'REL', 'SCH', 'CMPL', 'UNKNOWN']) {
-    let s = startRepair(run(), request(), now);
-    s = advance(s, [load()]);
-    s = advance(s, app());
-    s = advance(s, [wave()]);
-    s = advance(s, { ...wave(), waveStatus: status });
-    assert.equal(s.phase, 'done');
-    assert.equal(planRepair(s, now).route, 0);
-    assert.equal(s.audit.waveDeleted, false);
-  }
+test('a correctly linked planned wave is reused without creating a duplicate', () => {
+  const { s, writes } = simulate({ existing: 'WAVE-1' });
+  assert.deepEqual(
+    writes.map((r) => r.phase),
+    ['moveAppointment'],
+  );
+  assert.equal(s.audit.waveCreated, false);
+  assert.equal(s.audit.waveReused, true);
+  assert.equal(s.audit.waveDeleted, false);
+  assert.equal(s.audit.waveLinked, true);
 });
-test('missing allocation evidence and multiple loads fail closed', () => {
+test('an old unallocated wave is replaced with the saved wave before the appointment moves', () => {
+  const { s, writes, visited } = simulate({ existing: 'OLD-WAVE' });
+  assert.deepEqual(
+    writes.map((r) => r.phase),
+    ['cancelWave', 'createWave', 'moveAppointment'],
+  );
+  assert.equal(writes[0].body.waveNumber, 'OLD-WAVE');
+  assert.equal(writes[1].body.waveNumber, 'WAVE-1');
+  assert(visited.indexOf('verifyWavesGone') < visited.indexOf('createWave'));
+  assert.equal(s.audit.previousWave, 'OLD-WAVE');
+  assert.equal(s.audit.waveDeleted, true);
+  assert.equal(s.audit.waveCreated, true);
+  assert.equal(s.audit.appointmentDeleted, false);
+});
+test('allocated, unknown, active or shared waves never reach a write', () => {
   for (const change of [
+    { waveStatus: 'ALOC' },
+    { waveStatus: 'AINP' },
+    { waveStatus: 'REL' },
+    { waveStatus: 'SCH' },
+    { waveStatus: 'CMPL' },
+    { waveStatus: 'UNKNOWN' },
     { pickCount: null },
     { pickCount: 1 },
     { pickQuantity: 2 },
     { loadCount: 2 },
+    { totalShipments: 2 },
+    { totalShipments: undefined },
     { replCount: 1 },
     { dateReleased: '2030-01-01' },
+    { warehouseId: 'OTHER' },
   ]) {
-    let s = startRepair(run(), request(), now);
-    s = advance(s, [load()]);
-    s = advance(s, app());
-    s = advance(s, [wave()]);
-    s = advance(s, { ...wave(), ...change });
-    assert.equal(s.phase, 'done');
+    unchanged(
+      simulate({
+        existing: 'OLD-WAVE',
+        overrides: { wave: () => response({ ...wave('OLD-WAVE'), ...change }) },
+      }),
+    );
   }
 });
-test('verified empty picks support a planned wave with null quantity projections', () => {
-  const s = eligible(),
-    p = planRepair(s, now);
-  assert.equal(s.phase, 'cancelWave');
-  assert.equal(p.route, 2);
-  assert.equal(p.request.method, 'PUT');
-  assert.equal(p.request.body.waveNumber, 'WAVE-1');
-  assert.equal(s.audit.waveDeleted, false);
-});
-test('wave cancellation must complete before appointment deletion; timeout is not retried', () => {
-  let s = eligible();
-  s = advance(
-    s,
-    {
-      asynchronousResources_uri:
-        base + '/waves/cancelWave/async/TEST-1/resources',
-    },
-    202,
+test('a target-name collision or multiple linked waves cannot create a duplicate or delete another wave', () => {
+  for (const existing of [null, 'OLD-WAVE'])
+    unchanged(
+      simulate({
+        existing,
+        overrides: { targetName: () => response([wave()]) },
+      }),
+    );
+  unchanged(
+    simulate({
+      overrides: { waves: () => response([wave(), wave('ANOTHER')]) },
+    }),
   );
-  assert.equal(s.phase, 'pollWave');
-  s = advance(s, [{ asynchronousStatus: 'COMPLETE' }]);
-  assert.equal(s.phase, 'verifyWavesGone');
-  assert.equal(s.audit.waveDeleted, false);
-  const uncertain = applyRepairResponse(
-    planRepair(eligible(), now),
-    { error: 'timeout' },
-    now,
+  unchanged(
+    simulate({
+      overrides: {
+        waves: () => ({ statusCode: 200, body: { data: [], totalCount: 1 } }),
+      },
+    }),
   );
-  assert.equal(uncertain.phase, 'done');
-  assert.equal(uncertain.audit.repairNeedsReview, true);
-  assert.equal(planRepair(uncertain, now).route, 0);
 });
-test('repair preserves audit through delete and recreate without rerunning the wave flow', () => {
-  let s = eligible();
-  s = advance(
-    s,
-    {
-      asynchronousResources_uri:
-        base + '/waves/cancelWave/async/TEST-1/resources',
-    },
-    202,
+test('the saved shipment, its wave association and empty load picks must all be verified', () => {
+  for (const [phase, result] of [
+    ['shipment', response({ ...shipment(), carrierMoveId: 'OTHER' })],
+    ['shipment', response({ ...shipment(), warehouseId: 'OTHER' })],
+    ['shipmentWaves', response([wave('OTHER')])],
+    ['loadPicks', response([{ pickId: 'PICK' }])],
+    ['wavableLines', response([])],
+  ])
+    unchanged(simulate({ overrides: { [phase]: () => result } }));
+  unchanged(
+    simulate({
+      existing: 'WAVE-1',
+      overrides: {
+        waveLoads: () =>
+          response([load(), { ...load(), carrierMoveId: 'OTHER' }]),
+      },
+    }),
   );
-  s = advance(s, [{ asynchronousStatus: 'COMPLETE' }]);
-  s = advance(s, []);
-  assert.equal(s.audit.waveDeleted, true);
-  s = advance(s, app());
-  s = advance(s, [load()]);
-  assert.equal(s.phase, 'deleteAppointment');
-  assert.equal(planRepair(s, now).route, 3);
-  s = advance(s, {}, 204);
-  s = advance(s, {}, 404);
-  s = advance(s, [{ ...load(), appointmentId: null }]);
-  s = advance(s, []);
-  assert.equal(s.phase, 'createAppointment');
-  assert.equal(planRepair(s, now).request.body.startDate, row.startIso);
-  s = advance(s, { appointmentId: 'APP-NEW' }, 201);
-  s = advance(s, {
-    ...app(),
-    resourceId: 'APP-NEW',
-    appointmentId: 'APP-NEW',
-    startDate: row.startIso,
-    endDate: row.endIso,
-  });
-  s = advance(s, [{ ...load(), appointmentId: 'APP-NEW' }]);
-  assert.equal(s.phase, 'done');
-  assert.equal(s.audit.appointmentRecreated, true);
-  const summary = repairSummary(s);
-  assert.equal(summary.results[0].appointmentId, 'APP-NEW');
-  assert.equal(summary.failed, 1);
-  assert.equal(summary.appointmentRepairs.length, 1);
-  assert.equal(summary.results[0].manualReviewRequired, true);
 });
-test('an appointment already at the requested time is preserved', () => {
-  let s = startRepair(run(), request(), now);
-  s = advance(s, [load()]);
-  s = advance(s, { ...app(), startDate: row.startIso, endDate: row.endIso });
-  s = advance(s, [wave()]);
-  s = advance(s, wave());
-  s = advance(s, [load()]);
-  s = advance(s, []);
-  s = advance(s, wave());
-  assert.equal(s.phase, 'done');
-  assert.match(s.audit.recoveryStatus, /Already/);
-  assert.equal(s.audit.waveDeleted, false);
-});
-test('recurring, checked-in and changed appointments are never deleted', () => {
+test('recurring, checked-in and active appointments and loads remain unchanged', () => {
   for (const change of [
     { recurringAppointmentId: 'SERIES' },
     { trailerCheckedIn: true },
@@ -249,80 +379,223 @@ test('recurring, checked-in and changed appointments are never deleted', () => {
     { dispatch: true },
     { trailerId: 'TRAILER' },
     { advancedAllocation: true },
+  ])
+    unchanged(simulate({ appointment: { ...app(), ...change } }));
+  for (const change of [
+    { loaded: 1 },
+    { isLoading: 1 },
+    { close: undefined },
+    { trailerNumber: 'TRAILER' },
+  ])
+    unchanged(
+      simulate({
+        overrides: { load: () => response([{ ...load(), ...change }]) },
+      }),
+    );
+});
+test('changes to a wave, appointment, shipment or load during inspection prevent the first write', () => {
+  for (const [phase, result, existing] of [
+    ['recheckAppointment', response({ ...app(), version: 2 }), null],
+    ['recheckLoad', response([{ ...load(), appointmentId: 'OTHER' }]), null],
+    ['recheckWaves', response([wave()]), null],
+    [
+      'recheckShipment',
+      response({ ...shipment(), carrierMoveId: 'OTHER' }),
+      null,
+    ],
+    ['recheckShipmentWaves', response([wave()]), null],
+    ['recheckLoadPicks', response([{ pickId: 'PICK' }]), null],
+    ['recheckTargetName', response([wave()]), null],
+    [
+      'recheckWave',
+      response({ ...wave(), dateLastModified: 'CHANGED' }),
+      'WAVE-1',
+    ],
+    ['recheckWave', response({ ...wave(), waveStatus: 'ALOC' }), 'WAVE-1'],
+    ['recheckPicks', response([{ pickId: 'PICK' }]), 'WAVE-1'],
+  ])
+    unchanged(simulate({ existing, overrides: { [phase]: () => result } }));
+});
+test('an already correct appointment still gets its missing wave but requires no appointment write', () => {
+  const appointment = {
+    ...app(),
+    startDate: row.startIso,
+    endDate: row.endIso,
+  };
+  const missing = simulate({ appointment });
+  assert.deepEqual(
+    missing.writes.map((r) => r.phase),
+    ['createWave'],
+  );
+  assert.equal(missing.s.audit.waveCreated, true);
+  assert.equal(missing.s.audit.appointmentMoved, false);
+  const existing = simulate({ appointment, existing: 'WAVE-1' });
+  unchanged(existing);
+  assert.equal(existing.s.audit.waveReused, true);
+  assert.match(existing.s.audit.recoveryStatus, /already correct/i);
+});
+test('wave creation acceptance is insufficient: failures, timeouts and wrong links stop before moving the appointment', () => {
+  for (const [phase, result] of [
+    ['createWave', { error: 'timeout' }],
+    [
+      'createWave',
+      response({ asynchronousResources_uri: 'https://example.com/task' }, 202),
+    ],
+    ['pollCreateWave', response([{ asynchronousStatus: 'FAILURE' }])],
+    ['pollCreateWave', response([{ asynchronousStatus: 'RUNNING' }])],
+    ['verifyCreatedWaves', response([])],
+    ['verifyCreatedWaves', response([wave('WRONG')])],
   ]) {
-    let s = startRepair(run(), request(), now);
-    s = advance(s, [load()]);
-    s = advance(s, { ...app(), ...change });
-    assert.equal(s.phase, 'done');
+    const r = simulate({ overrides: { [phase]: () => result } });
+    assert.deepEqual(
+      r.writes.map((r) => r.phase),
+      ['createWave'],
+    );
+    assert.equal(r.s.audit.repairNeedsReview, true);
+    assert.equal(r.s.audit.appointmentMoved, false);
+    assert.equal(r.s.audit.waveCreated, false);
   }
-  let s = eligible();
-  s = advance(
-    s,
-    {
-      asynchronousResources_uri:
-        base + '/waves/cancelWave/async/TEST-1/resources',
-    },
-    202,
-  );
-  s = advance(s, [{ asynchronousStatus: 'COMPLETE' }]);
-  s = advance(s, []);
-  s = advance(s, { ...app(), version: 2 });
-  assert.equal(s.phase, 'done');
-  assert.equal(s.audit.appointmentDeleted, false);
-});
-test('unexpected lookup destinations and response payloads stop the repair', () => {
-  let s = startRepair(run(), request(), now);
-  s = advance(s, [{ ...load(), waves_uri: 'https://example.com/steal' }]);
-  assert.equal(s.phase, 'done');
-  s = eligible();
-  s = advance(
-    s,
-    { asynchronousResources_uri: 'https://example.com/task' },
-    202,
-  );
-  assert.equal(s.phase, 'done');
-  s = startRepair(run(), request(), now);
-  s = applyRepairResponse(
-    planRepair(s, now),
-    { statusCode: 200, body: '<html>Sign in</html>' },
-    now,
-  );
-  assert.equal(s.phase, 'done');
-});
-test('same request and a previous uncertain mutation cannot be replayed', () => {
-  const r = run();
-  r.summaryJson = JSON.stringify({
-    results: [{ ...row, repairWriteAttempted: true }],
-    appointmentRepairs: [],
+  const allocated = simulate({
+    overrides: { wave: () => response({ ...wave(), waveStatus: 'ALOC' }) },
   });
-  assert.throws(() => startRepair(r, request(), now), /review/i);
-  r.summaryJson = JSON.stringify({
-    results: [row],
-    appointmentRepairs: [{ repairId: request().repairId }],
-  });
-  assert.throws(() => startRepair(r, request(), now), /already/i);
+  assert.equal(allocated.writes.length, 1);
+  assert.equal(allocated.s.audit.repairNeedsReview, true);
 });
-
-test('association projections may omit warehouse and counts; full wave identity is still checked', () => {
-  let s = startRepair(run(), request(), now);
-  s = advance(s, [load()]);
-  s = advance(s, app());
-  s = applyRepairResponse(
-    planRepair(s, now),
-    {
-      statusCode: 200,
-      body: { data: [{ waveNumber: 'WAVE-1', warehouseId: null }] },
-    },
-    now,
+test('failed wave deletion never reaches creation or appointment movement', () => {
+  for (const [phase, result] of [
+    ['cancelWave', { error: 'timeout' }],
+    ['pollWave', response([{ asynchronousStatus: 'FAILURE' }])],
+    ['verifyWavesGone', response([wave('OLD-WAVE')])],
+  ]) {
+    const r = simulate({
+      existing: 'OLD-WAVE',
+      overrides: { [phase]: () => result },
+    });
+    assert.deepEqual(
+      r.writes.map((r) => r.phase),
+      ['cancelWave'],
+    );
+    assert.equal(r.s.audit.repairNeedsReview, true);
+  }
+});
+test('failed or uncertain appointment movement is recorded without retry or a successful movement claim', () => {
+  for (const [phase, result] of [
+    ['moveAppointment', { error: 'timeout' }],
+    [
+      'moveAppointment',
+      {
+        statusCode: 422,
+        body: { errors: [{ userMessage: 'Slot unavailable' }] },
+      },
+    ],
+    ['verifyMovedAppointment', response(app())],
+    ['verifyMovedLoad', response([{ ...load(), appointmentId: 'OTHER' }])],
+    ['verifyFinalWaves', response([])],
+    ['verifyFinalShipmentWaves', response([])],
+  ]) {
+    const r = simulate({
+      existing: 'WAVE-1',
+      overrides: { [phase]: () => result },
+    });
+    assert.equal(r.writes.length, 1);
+    assert.equal(r.s.audit.appointmentMoved, false);
+    assert.equal(r.s.audit.repairNeedsReview, true);
+  }
+});
+test('authorization, saved identity, dates and mutation replay are enforced', () => {
+  for (const q of [
+    { ...request(), confirm: false },
+    { ...request(), load: 'OTHER' },
+    { ...request(), expectedUpdatedAt: 'STALE' },
+  ])
+    assert.throws(() => startRepair(run(), q, now));
+  assert.throws(
+    () => startRepair({ ...run(), status: 'running' }, request(), now),
+    /finish/,
   );
-  assert.equal(s.phase, 'wave');
-  s = advance(s, { ...wave(), warehouseId: 'OTHER' });
-  assert.equal(s.phase, 'done');
-});
-
-test('older AZ02 run summaries without a warehouse field retain their saved appointment data', () => {
-  const r = run();
+  assert.throws(
+    () => startRepair(run(), request(), Date.parse('2030-01-03T12:00:00Z')),
+    /past/,
+  );
+  for (const change of [
+    { direction: 'IB' },
+    { whId: 'OTHER' },
+    { schbat: '' },
+    { shipmentId: '' },
+    { shipmentId: "SID'; delete" },
+    { repairWriteAttempted: true },
+    { waveCreated: true },
+    { appointmentMoved: true },
+  ])
+    assert.throws(() =>
+      startRepair(
+        {
+          ...run(),
+          summaryJson: JSON.stringify({ results: [{ ...row, ...change }] }),
+        },
+        request(),
+        now,
+      ),
+    );
+  assert.throws(
+    () =>
+      startRepair(
+        {
+          ...run(),
+          summaryJson: JSON.stringify({
+            results: [row],
+            appointmentRepairs: [{ repairId: request().repairId }],
+          }),
+        },
+        request(),
+        now,
+      ),
+    /already/,
+  );
   const { whId: _whId, ...older } = row;
-  r.summaryJson = JSON.stringify({ results: [older] });
-  assert.equal(startRepair(r, request(), now).row.whId, 'AZ02');
+  assert.equal(
+    startRepair(
+      { ...run(), summaryJson: JSON.stringify({ results: [older] }) },
+      request(),
+      now,
+    ).row.whId,
+    'AZ02',
+  );
+});
+test('untrusted response destinations, HTML and pagination ambiguity stop the repair', () => {
+  unchanged(
+    simulate({
+      overrides: {
+        load: () =>
+          response([{ ...load(), waves_uri: 'https://example.com/steal' }]),
+      },
+    }),
+  );
+  unchanged(
+    simulate({
+      overrides: {
+        load: () => ({ statusCode: 200, body: '<html>Sign in</html>' }),
+      },
+    }),
+  );
+  unchanged(
+    simulate({
+      overrides: {
+        loadPicks: () => ({
+          statusCode: 200,
+          body: { data: [], totalCount: 1 },
+        }),
+      },
+    }),
+  );
+});
+test('the intended wave name is encoded without changing its saved spelling', () => {
+  const name = 'AM 0102 1000 LOAD-1 000123';
+  const r = simulate({ savedRow: { ...row, schbat: name } });
+  assert.equal(r.writes[0].body.waveNumber, name);
+  assert.equal(r.s.audit.verifiedWave, name);
+  assert.match(
+    r.requests.find((r) => r.phase === 'recheckTargetName').url,
+    /AM%200102%201000/,
+  );
 });

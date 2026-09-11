@@ -34,6 +34,8 @@ test('repair availability preserves original result indices and blocks past or a
     slotId: 'AMBIENT_SOUTH_DOORS',
     startIso: '2030-01-02T10:00:00-07:00',
     appointmentConflict: true,
+    schbat: 'WAVE-1',
+    shipmentId: 'SHIP-1',
   };
   const now = Date.parse('2030-01-01T00:00:00Z');
   assert.equal(repairUnavailable(row, 'completed_with_issues', now), '');
@@ -119,4 +121,35 @@ test('protected rows report no deletion and preserve failure details', () => {
   assert.equal(row.waveDeleted, 'No');
   assert.equal(row.appointmentDeleted, 'No');
   assert.equal(row.details, 'Allocated wave left unchanged.');
+});
+
+test('wave and appointment audit distinguishes saved intent from verified actions', () => {
+  const [historical] = appointmentConflicts([
+    {
+      appointmentConflict: true,
+      schbat: 'SAVED',
+      recoveryStatus: 'Recovery disabled',
+    },
+  ]);
+  assert.equal(historical.intendedWave, 'SAVED');
+  assert.equal(historical.outcome, 'Repair not run');
+  assert.equal(historical.waveCreated, 'Not recorded');
+  const [repaired] = appointmentConflicts([
+    {
+      appointmentConflict: true,
+      schbat: 'SAVED',
+      verifiedWave: 'SAVED',
+      shipmentId: 'SHIP-1',
+      waveCreated: true,
+      waveLinked: true,
+      waveReused: false,
+      appointmentMoved: true,
+      appointmentId: 'SAME-ID',
+    },
+  ]);
+  assert.equal(repaired.waveCreated, 'Yes');
+  assert.equal(repaired.waveLinked, 'Yes');
+  assert.equal(repaired.waveReused, 'No');
+  assert.equal(repaired.appointmentMoved, 'Yes');
+  assert.equal(repaired.newAppointment, 'SAME-ID');
 });

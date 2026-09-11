@@ -22,6 +22,8 @@ export function repairUnavailable(
     return 'Manual review required';
   if (
     row.repairWriteAttempted ||
+    row.waveCreated ||
+    row.appointmentMoved ||
     row.appointmentRecreated ||
     row.waveDeleted ||
     row.appointmentDeleted
@@ -34,7 +36,13 @@ export function repairUnavailable(
       .slice(0, 10) < new Date(now - 7 * 3600000).toISOString().slice(0, 10)
   )
     return 'Requested date has passed';
-  if (!row.carcod || !row.slotId || !row.carMoveId)
+  if (
+    !row.carcod ||
+    !row.slotId ||
+    !row.carMoveId ||
+    !row.schbat ||
+    !row.shipmentId
+  )
     return 'Saved details incomplete';
   return '';
 }
@@ -51,10 +59,16 @@ export function appointmentConflicts(rows: ResultRow[]): ResultRow[] {
             requestedEnd: row.endIso || '',
             allocation: row.allocationStatus || 'Not recorded',
             previousWave: row.previousWave || 'Not recorded',
+            intendedWave: row.intendedWave || row.schbat || 'Not recorded',
+            verifiedWave: row.verifiedWave || '',
+            shipment: row.shipmentId || 'Not recorded',
             previousAppointment: row.previousAppointmentId || 'Not recorded',
             previousAppointmentStart: row.previousAppointmentStart || '',
             previousAppointmentEnd: row.previousAppointmentEnd || '',
-            outcome: row.recoveryStatus || 'Manual review required',
+            outcome:
+              row.recoveryStatus === 'Recovery disabled'
+                ? 'Repair not run'
+                : row.recoveryStatus || 'Manual review required',
             details:
               row.recoveryNote ||
               'An existing appointment blocked this load. This run did not record a recovery audit; check the current wave and appointment in Blue Yonder.',
@@ -76,6 +90,21 @@ export function appointmentConflicts(rows: ResultRow[]): ResultRow[] {
                   ? 'Yes'
                   : 'No'
                 : 'Not recorded',
+            ...Object.fromEntries(
+              [
+                'waveCreated',
+                'waveLinked',
+                'waveReused',
+                'appointmentMoved',
+              ].map((key) => [
+                key,
+                typeof row[key] === 'boolean'
+                  ? row[key]
+                    ? 'Yes'
+                    : 'No'
+                  : 'Not recorded',
+              ]),
+            ),
             newAppointment: row.appointmentId || '',
             checkedAt: row.recoveryCheckedAt || '',
             manualReview: 'Required',
