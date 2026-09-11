@@ -1020,10 +1020,28 @@ h1 {
   color: #92dab4;
   border-color: #355a45;
 }
-.state-failed {
+.state-failed,
+.state-stopped {
   background: #432928;
   color: #f5a5a0;
   border-color: #663a37;
+}
+.state-discarded {
+  color: #a5adba;
+  background: #272c35;
+  border-color: #444c59;
+}
+.run-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.run-control-bar button {
+  flex-shrink: 0;
 }
 .pulse-dot {
   width: 5px;
@@ -1940,11 +1958,37 @@ h1 {
   }
 }
 
-.repair-history { padding: 20px; border-top: 1px solid var(--border); }
-.repair-control { padding-top: 12px; min-width: 170px; }
-.repair-control p { max-width: 190px; margin: 8px 0 0; white-space: normal; font-size: 12px; }
-.repair-history summary { cursor: pointer; font-weight: 600; }
-.repair-history-item { padding: 14px 0; border-bottom: 1px solid var(--border); }
-.repair-history-item p { margin: 5px 0; font-size: 13px; }
-.state-repairing { background: #153b48; color: #83e6d0; }
-.state-repair_attention { background: #45371c; color: #f0cd88; }
+.repair-history {
+  padding: 20px;
+  border-top: 1px solid var(--border);
+}
+.repair-control {
+  padding-top: 12px;
+  min-width: 170px;
+}
+.repair-control p {
+  max-width: 190px;
+  margin: 8px 0 0;
+  white-space: normal;
+  font-size: 12px;
+}
+.repair-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.repair-history-item {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.repair-history-item p {
+  margin: 5px 0;
+  font-size: 13px;
+}
+.state-repairing {
+  background: #153b48;
+  color: #83e6d0;
+}
+.state-repair_attention {
+  background: #45371c;
+  color: #f0cd88;
+}

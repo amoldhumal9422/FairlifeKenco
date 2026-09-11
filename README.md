@@ -59,6 +59,9 @@ The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization
 - `reject`: accept `runId` and `reason`, record the rejection, and wait for a replacement.
 - `upload`: accept `runId`, `fileName`, `fileBase64`, and `sheetName`. Validate the replacement before accepting it for production.
 - `repair`: accept `runId`, the original result's `rowIndex`, `load`, `expectedUpdatedAt`, a UUID `repairId`, and `confirm: true`. The authenticated backend validates the saved conflict and appointment date, claims the run, and returns `202` before inspecting Blue Yonder. Like workbook approval, it accepts today's Arizona date or a future date. Client-supplied times and request URLs are not used.
+- `sync`: accept `runId`, check the saved execution's actual status, and reconcile a stale active record. This never starts or stops an execution.
+- `stop`: accept `runId` and `confirm: true`. Resolve its saved execution, verify it belongs to this workflow, request cancellation, then read back its final status. A request already sent to Blue Yonder may finish; completed changes are retained.
+- `discard`: accept `runId`, `expectedUpdatedAt`, and `confirm: true`. Remove a pending, rejected, failed, or stopped file from the review queue while retaining its workbook and history. A conditional update rejects simultaneous approval or other changes.
 
 The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected data. Failed requests return a suitable HTTP status and an `error` message. Duplicate approvals must be rejected by the backend.
 
@@ -73,7 +76,11 @@ The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected d
 - Ordinary appointment conflicts stop before wave creation and use read-only lookups. **Repair appointment** is a separate, confirmed production action for one outbound AZ02 load. It rechecks wave ownership, allocation, empty picks and the original appointment. A single eligible unallocated wave is deleted, followed by the old appointment; a replacement appointment is then created at the saved time and verified. The action does not recreate the wave or rerun the workbook. An appointment that already matches is left unchanged.
 - Allocated, active or shared waves, recurring or checked-in appointments, missing allocation evidence, and changed assignments stop for review. The repair uses an exclusive server-side lock and saves its audit before every request. A failed or uncertain write is not retried automatically. Review every repaired load manually, including successful repairs.
 - Run results retain their original production totals. Repair history, original and replacement appointment IDs, allocation checks, and confirmed actions are recorded separately and sent in a repair email.
-- Active runs refresh every 45 seconds and idle history every five minutes. All appointment times use Phoenix time.
+- Active runs refresh every 15 seconds and idle history every five minutes. The dashboard reconciles active rows against n8n, including failed manual preparations. All appointment times use Phoenix time.
+
+### Execution control credential
+
+The n8n credential **Wave Bot execution control** is restricted to this n8n instance and uses only `execution:read` and `execution:stop`. Its current API key expires **December 10, 2026**. Renew it in n8n and update that credential before expiry. The key stays in n8n's credential store and is never shipped to the website. An unavailable or expired credential reports a verification error; it must never report a successful stop without confirmation.
 
 ## Checks
 

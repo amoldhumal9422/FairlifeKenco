@@ -96,7 +96,14 @@ test('view-only mode blocks every write before it reaches n8n', async () => {
     calls++;
     return Response.json({});
   });
-  for (const action of ['generate', 'approve', 'reject', 'upload'])
+  for (const action of [
+    'generate',
+    'approve',
+    'reject',
+    'upload',
+    'stop',
+    'discard',
+  ])
     await assert.rejects(client({ action, runId: '123' }), /view-only/);
   await assert.rejects(
     client({ action: 'delete', runId: '123' }),

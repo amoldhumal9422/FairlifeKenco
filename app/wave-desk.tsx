@@ -39,7 +39,10 @@ import {
   History,
   MapPin,
   Truck,
+  Square,
+  Trash2,
 } from 'lucide-react';
+import { canStopRun, canDiscardRun } from '@/lib/run-controls';
 import WaveAnalytics from './wave-analytics';
 import {
   appointmentConflicts,
@@ -91,6 +94,7 @@ export type ApiResponse = {
   run: Run;
   runId?: string;
   status?: string;
+  message?: string;
 };
 export type ApiClient = (body: Record<string, unknown>) => Promise<ApiResponse>;
 const statuses: Record<string, string> = {
@@ -100,7 +104,9 @@ const statuses: Record<string, string> = {
   running: 'Running in Blue Yonder',
   completed: 'Completed',
   completed_with_issues: 'Completed with issues',
-  failed: 'Stopped',
+  failed: 'Failed',
+  stopped: 'Stopped',
+  discarded: 'Removed from queue',
   repairing: 'Repairing appointment',
   repair_attention: 'Repair needs review',
 };
@@ -259,6 +265,11 @@ export default function WaveBot({
     repairId: string;
   } | null>(null);
   const actionInFlight = useRef(false);
+  const refreshInFlight = useRef(false);
+  const [control, setControl] = useState<{
+    action: 'stop' | 'discard';
+    run: Run;
+  } | null>(null);
   const selectedId = useRef(''),
     requestVersion = useRef(0),
     fileInput = useRef<HTMLInputElement>(null);
@@ -277,9 +288,24 @@ export default function WaveBot({
     [api],
   );
   const refresh = useCallback(async () => {
-    if (!viewer) return;
+    if (!viewer || refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
-      const result = await api({ action: 'list' });
+      let result = await api({ action: 'list' });
+      let statusError = '';
+      const activeRuns = result.runs.filter((r) => canStopRun(r.status));
+      if (activeRuns.length) {
+        const checks = await Promise.allSettled(
+          activeRuns.map((r) => api({ action: 'sync', runId: r.runId })),
+        );
+        const unavailable = checks.find((r) => r.status === 'rejected');
+        if (unavailable?.status === 'rejected')
+          statusError =
+            unavailable.reason instanceof Error
+              ? unavailable.reason.message
+              : 'Execution status could not be verified.';
+        result = await api({ action: 'list' });
+      }
       const latest = result.runs || [];
       setRuns(latest);
       const current = latest.find((r: Run) => r.runId === selectedId.current);
@@ -296,10 +322,11 @@ export default function WaveBot({
           (latest.find((r) => r.status === 'pending') || latest[0]).runId,
         );
       }
-      setError('');
+      setError(statusError);
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      refreshInFlight.current = false;
       setLoading(false);
     }
   }, [viewer, api, detail]);
@@ -320,7 +347,7 @@ export default function WaveBot({
       () => {
         if (document.visibilityState === 'visible' && !busy) void refresh();
       },
-      active ? 45000 : 300000,
+      active ? 15000 : 300000,
     );
     const focus = () => {
       if (document.visibilityState === 'visible' && !busy) void refresh();
@@ -347,15 +374,21 @@ export default function WaveBot({
       const result = await api({ action, runId: selected?.runId, ...extras });
       setDecision(null);
       setRepair(null);
+      setControl(null);
       setReason('');
       setNotice(
-        action === 'generate'
-          ? 'Preparing the wave file. It will wait here for approval.'
-          : action === 'reject'
-            ? 'File rejected. Choose a replacement workbook below.'
-            : action === 'repair'
-              ? 'Appointment repair accepted. Its checks and recorded actions will appear below.'
-              : 'Run accepted. Blue Yonder processing has started.',
+        result.message ||
+          (action === 'stop'
+            ? 'Run status checked. Review the final status below.'
+            : action === 'discard'
+              ? 'File removed from the review queue. Its history is retained.'
+              : action === 'generate'
+                ? 'Preparing the wave file. It will wait here for approval.'
+                : action === 'reject'
+                  ? 'File rejected. Choose a replacement workbook below.'
+                  : action === 'repair'
+                    ? 'Appointment repair accepted. Its checks and recorded actions will appear below.'
+                    : 'Run accepted. Blue Yonder processing has started.'),
       );
       await refresh();
       if (result.runId) await detail(result.runId);
@@ -554,6 +587,22 @@ export default function WaveBot({
             >
               <RefreshCw className={loading ? 'spin' : ''} />
             </Button>
+            {active && (
+              <Button
+                variant="destructive"
+                aria-label="Stop active workflow"
+                disabled={readOnly || !!busy || !viewer}
+                onClick={() => {
+                  const run =
+                    selected && canStopRun(selected.status)
+                      ? selected
+                      : runs.find((r) => canStopRun(r.status));
+                  if (run) setControl({ action: 'stop', run });
+                }}
+              >
+                <Square /> Stop workflow
+              </Button>
+            )}
             <Button
               className="primary-action"
               onClick={() => void perform('generate')}
@@ -762,11 +811,42 @@ export default function WaveBot({
                     <p className="muted">
                       {selected.replacementFileName ||
                         selected.fileName ||
-                        'Preparing your workbook…'}
+                        (canStopRun(selected.status)
+                          ? 'Preparing your workbook…'
+                          : 'No workbook created')}
                     </p>
                   </div>
                   <State status={selected.status} />
                 </div>
+                {(canStopRun(selected.status) ||
+                  canDiscardRun(selected.status)) && (
+                  <div className="run-control-bar">
+                    <span className="muted">
+                      {canStopRun(selected.status)
+                        ? 'You can stop this run at any time.'
+                        : 'Finished with this file? Remove it from the queue.'}
+                    </span>
+                    <Button
+                      variant={
+                        canStopRun(selected.status) ? 'destructive' : 'outline'
+                      }
+                      disabled={readOnly || !!busy}
+                      onClick={() =>
+                        setControl({
+                          action: canStopRun(selected.status)
+                            ? 'stop'
+                            : 'discard',
+                          run: selected,
+                        })
+                      }
+                    >
+                      {canStopRun(selected.status) ? <Square /> : <Trash2 />}
+                      {canStopRun(selected.status)
+                        ? 'Stop workflow'
+                        : 'Remove from queue'}
+                    </Button>
+                  </div>
+                )}
                 <div className="file-facts">
                   <span>
                     <strong>
@@ -1454,6 +1534,58 @@ export default function WaveBot({
           </span>
         </footer>
       </section>
+      <Dialog
+        open={control !== null}
+        onOpenChange={(open) => !open && !busy && setControl(null)}
+      >
+        <DialogContent>
+          <DialogTitle>
+            {control?.action === 'stop'
+              ? 'Stop this workflow?'
+              : 'Remove this file from the queue?'}
+          </DialogTitle>
+          <DialogDescription>
+            {control?.action === 'stop'
+              ? 'Stop the current execution in n8n. A request already sent to Blue Yonder may finish. Existing appointments and waves stay as they are; check the execution before starting another run.'
+              : 'This file will no longer wait for approval or a replacement. Its workbook and history remain available. No Blue Yonder records will be changed.'}
+          </DialogDescription>
+          <p>
+            Run {control?.run.runId} ·{' '}
+            {control?.run.fileName || 'File preparation'}
+          </p>
+          {error && (
+            <p role="alert" className="inline-error">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={!!busy}
+              onClick={() => setControl(null)}
+            >
+              Keep it
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={readOnly || !!busy || !control}
+              onClick={() =>
+                control &&
+                void perform(control.action, {
+                  runId: control.run.runId,
+                  expectedUpdatedAt: control.run.updatedAt,
+                  confirm: true,
+                })
+              }
+            >
+              {busy && <LoaderCircle className="spin" />}
+              {control?.action === 'stop'
+                ? 'Stop workflow'
+                : 'Remove from queue'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={repair !== null}
         onOpenChange={(open) => {

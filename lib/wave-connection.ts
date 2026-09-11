@@ -54,8 +54,11 @@ const actions = new Set([
   'reject',
   'upload',
   'repair',
+  'stop',
+  'discard',
+  'sync',
 ]);
-const readActions = new Set(['list', 'detail']);
+const readActions = new Set(['list', 'detail', 'sync']);
 
 export function createWaveClient(
   connection: Connection,
