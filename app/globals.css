@@ -1108,8 +1108,16 @@ h1 {
 }
 .detail-tabs [data-slot='tabs-list'] {
   margin: 0 20px 15px;
-  height: 38px;
+  max-width: calc(100% - 40px);
+  height: auto;
+  min-height: 38px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  row-gap: 10px;
   background: transparent;
+}
+.conflict-toolbar {
+  flex-wrap: wrap;
 }
 .detail-tabs [data-slot='tabs-trigger'] {
   padding: 8px 11px;

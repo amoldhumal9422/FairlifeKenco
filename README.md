@@ -68,6 +68,8 @@ The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected d
 - A rejected workbook waits for a replacement. Both file versions and decisions remain in run history.
 - Replacement files accept `.xlsx`, up to 2 MB and 1,000 rows; validation is enforced by the backend.
 - Results show the recorded shipment, load, appointment, and wave outcomes, including warnings and skipped rows.
+- **Appointments to verify** lists loads blocked by an existing appointment and exports a separate CSV. New runs record the previous appointment, linked wave, allocation assessment, and actions taken. Older runs show unavailable audit details as **Not recorded**.
+- Appointment-conflict recovery currently uses read-only lookups. Rejected outbound appointments stop before wave creation. Allocated or active waves are protected, and missing allocation quantities require manual review. Automatic deletion and recreation are disabled.
 - Active runs refresh every 45 seconds and idle history every five minutes. All appointment times use Phoenix time.
 
 ## Checks

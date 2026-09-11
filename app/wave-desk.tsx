@@ -41,6 +41,7 @@ import {
   Truck,
 } from 'lucide-react';
 import WaveAnalytics from './wave-analytics';
+import { appointmentConflicts } from '@/lib/appointment-conflicts';
 
 type Row = Record<string, string | number | boolean>;
 type Summary = {
@@ -417,6 +418,7 @@ export default function WaveBot({
       ),
   );
   const resultRows = selected?.summary.results || [];
+  const conflictRows = appointmentConflicts(resultRows);
   const reviewedCount = number(selected?.metadata.readyRows),
     totalCount = number(selected?.metadata.rowCount);
   const reviewRows = Array.isArray(selected?.metadata.reviewRows)
@@ -918,6 +920,10 @@ export default function WaveBot({
                       Run results
                       {resultRows.length > 0 && ` · ${resultRows.length}`}
                     </TabsTrigger>
+                    <TabsTrigger value="conflicts">
+                      Appointments to verify
+                      {conflictRows.length > 0 && ` · ${conflictRows.length}`}
+                    </TabsTrigger>
                     <TabsTrigger value="activity">Decision history</TabsTrigger>
                   </TabsList>
                   <TabsContent value="file">
@@ -973,6 +979,103 @@ export default function WaveBot({
                       File checks verify structure and required fields. Carrier
                       and order checks run against Blue Yonder after acceptance.
                     </p>
+                  </TabsContent>
+                  <TabsContent value="conflicts">
+                    <div className="table-toolbar conflict-toolbar">
+                      <h3>Loads requiring an appointment check</h3>
+                      <Button
+                        variant="outline"
+                        disabled={!conflictRows.length}
+                        onClick={() =>
+                          csv(
+                            conflictRows,
+                            `wave-run-${selected.runId}-appointment-checks.csv`,
+                          )
+                        }
+                      >
+                        <Download /> Export appointment checks
+                      </Button>
+                    </div>
+                    <p className="table-footnote">
+                      Check each listed load in Blue Yonder, including any
+                      successfully recovered load. Allocation and recovery
+                      details describe the run, not the current live state.
+                    </p>
+                    {conflictRows.length > 0 ? (
+                      <div className="scroll-table">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              {[
+                                'Load / order',
+                                'Requested time (Arizona)',
+                                'Allocation',
+                                'Previous wave / appointment',
+                                'Recovery outcome',
+                                'Actions recorded',
+                              ].map((heading) => (
+                                <TableHead key={heading}>{heading}</TableHead>
+                              ))}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {conflictRows.map((row, index) => (
+                              <TableRow key={index} className="row-issue">
+                                <TableCell>
+                                  <strong>{row.load || '—'}</strong>
+                                  <br />
+                                  {row.order || '—'}
+                                </TableCell>
+                                <TableCell>
+                                  {time(String(row.requestedStart))}
+                                  <br />
+                                  to {time(String(row.requestedEnd))}
+                                </TableCell>
+                                <TableCell>{row.allocation}</TableCell>
+                                <TableCell>
+                                  {row.previousWave}
+                                  <br />
+                                  {row.previousAppointment}
+                                  {!!row.previousAppointmentStart && (
+                                    <>
+                                      <br />
+                                      {time(
+                                        String(row.previousAppointmentStart),
+                                      )}
+                                    </>
+                                  )}
+                                </TableCell>
+                                <TableCell className="result-notes">
+                                  <strong>{row.outcome}</strong>
+                                  <br />
+                                  {row.details}
+                                </TableCell>
+                                <TableCell className="result-notes">
+                                  Wave deleted: {row.waveDeleted}
+                                  <br />
+                                  Appointment deleted: {row.appointmentDeleted}
+                                  <br />
+                                  Appointment recreated:{' '}
+                                  {row.appointmentRecreated}
+                                  {!!row.newAppointment && (
+                                    <>
+                                      <br />
+                                      New appointment: {row.newAppointment}
+                                    </>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <p className="table-empty">
+                        {selected.summary.processed !== undefined
+                          ? 'No existing-appointment conflicts were recorded for this run.'
+                          : 'Appointment checks will appear here after production finishes.'}
+                      </p>
+                    )}
                   </TabsContent>
                   <TabsContent value="results">
                     {selected.summary.processed !== undefined ? (
