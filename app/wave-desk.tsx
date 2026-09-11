@@ -1482,7 +1482,11 @@ export default function WaveBot({
                 <TableRow key={r.runId}>
                   <TableCell>{date(r.planDate)}</TableCell>
                   <TableCell>
-                    {r.replacementFileName || r.fileName || 'Preparing…'}
+                    {r.replacementFileName ||
+                      r.fileName ||
+                      (r.status === 'generating'
+                        ? 'Preparing…'
+                        : 'No workbook created')}
                   </TableCell>
                   <TableCell>
                     <State status={r.status} />
@@ -1529,7 +1533,7 @@ export default function WaveBot({
           </span>
           <span>
             {active
-              ? 'Updates every 45 seconds'
+              ? 'Updates every 15 seconds'
               : 'All appointment times in Phoenix time'}
           </span>
         </footer>
