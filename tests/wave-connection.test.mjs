@@ -12,6 +12,36 @@ const config = parseConnection({
   authMode: 'access-key',
   readOnly: true,
 });
+
+test('repair is authenticated and remains unavailable in view-only mode', async () => {
+  let sent;
+  const send = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return Response.json(
+      { status: 'repairing', runId: '123' },
+      { status: 202 },
+    );
+  };
+  const options = {
+    accessKey: 'fixture-key',
+    signal: new AbortController().signal,
+    onUnauthorized: () => {},
+    fetch: send,
+  };
+  await assert.rejects(
+    createWaveClient(config, options)({ action: 'repair', runId: '123' }),
+    /view-only/,
+  );
+  assert.equal(sent, undefined);
+  const writable = { ...config, readOnly: false };
+  await createWaveClient(
+    writable,
+    options,
+  )({ action: 'repair', runId: '123', confirm: true, rowIndex: 0 });
+  assert.equal(sent.action, 'repair');
+  assert.equal(sent.actor, 'Wave Bot operator');
+  assert.equal(sent.confirm, true);
+});
 function clientWith(send, overrides = {}) {
   return createWaveClient(config, {
     accessKey: 'test-only-key',

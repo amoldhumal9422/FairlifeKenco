@@ -58,6 +58,7 @@ The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization
 - `approve`: accept `runId`, atomically approve a pending file, and begin processing.
 - `reject`: accept `runId` and `reason`, record the rejection, and wait for a replacement.
 - `upload`: accept `runId`, `fileName`, `fileBase64`, and `sheetName`. Validate the replacement before accepting it for production.
+- `repair`: accept `runId`, the original result's `rowIndex`, `load`, `expectedUpdatedAt`, a UUID `repairId`, and `confirm: true`. The authenticated backend validates the saved conflict and appointment date, claims the run, and returns `202` before inspecting Blue Yonder. Like workbook approval, it accepts today's Arizona date or a future date. Client-supplied times and request URLs are not used.
 
 The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected data. Failed requests return a suitable HTTP status and an `error` message. Duplicate approvals must be rejected by the backend.
 
@@ -69,7 +70,9 @@ The `Run` and `ApiResponse` types in `app/wave-desk.tsx` describe the expected d
 - Replacement files accept `.xlsx`, up to 2 MB and 1,000 rows; validation is enforced by the backend.
 - Results show the recorded shipment, load, appointment, and wave outcomes, including warnings and skipped rows.
 - **Appointments to verify** lists loads blocked by an existing appointment and exports a separate CSV. New runs record the previous appointment, linked wave, allocation assessment, and actions taken. Older runs show unavailable audit details as **Not recorded**.
-- Appointment-conflict recovery currently uses read-only lookups. Rejected outbound appointments stop before wave creation. Allocated or active waves are protected, and missing allocation quantities require manual review. Automatic deletion and recreation are disabled.
+- Ordinary appointment conflicts stop before wave creation and use read-only lookups. **Repair appointment** is a separate, confirmed production action for one outbound AZ02 load. It rechecks wave ownership, allocation, empty picks and the original appointment. A single eligible unallocated wave is deleted, followed by the old appointment; a replacement appointment is then created at the saved time and verified. The action does not recreate the wave or rerun the workbook. An appointment that already matches is left unchanged.
+- Allocated, active or shared waves, recurring or checked-in appointments, missing allocation evidence, and changed assignments stop for review. The repair uses an exclusive server-side lock and saves its audit before every request. A failed or uncertain write is not retried automatically. Review every repaired load manually, including successful repairs.
+- Run results retain their original production totals. Repair history, original and replacement appointment IDs, allocation checks, and confirmed actions are recorded separately and sent in a repair email.
 - Active runs refresh every 45 seconds and idle history every five minutes. All appointment times use Phoenix time.
 
 ## Checks
@@ -79,3 +82,7 @@ npm run check
 npm test
 npm run build
 ```
+
+The repair engine in `workflow/appointment-repair.js` is embedded in the n8n Code nodes. Its automated tests use simulated responses with no network calls. The production repair path has not been executed for testing.
+
+If a repair is interrupted or a write cannot be confirmed, its run is marked **Repair needs review** and the `fairlife_appointment_repair_lock` stays held. An administrator must inspect the execution, load, wave, and appointment before clearing that lock. Do not use n8n's retry command on an execution that reached a write: it could repeat a production request. A repaired row remains unavailable for another website repair until it has been reviewed; no automatic rollback is attempted.

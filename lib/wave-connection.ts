@@ -53,6 +53,7 @@ const actions = new Set([
   'approve',
   'reject',
   'upload',
+  'repair',
 ]);
 const readActions = new Set(['list', 'detail']);
 

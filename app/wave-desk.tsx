@@ -41,7 +41,10 @@ import {
   Truck,
 } from 'lucide-react';
 import WaveAnalytics from './wave-analytics';
-import { appointmentConflicts } from '@/lib/appointment-conflicts';
+import {
+  appointmentConflicts,
+  repairUnavailable,
+} from '@/lib/appointment-conflicts';
 
 type Row = Record<string, string | number | boolean>;
 type Summary = {
@@ -54,6 +57,8 @@ type Summary = {
   results?: Row[];
   skippedRows?: Row[];
   error?: string;
+  appointmentRepairs?: Row[];
+  repairActive?: Row | null;
 };
 export type Run = {
   runId: string;
@@ -96,6 +101,8 @@ const statuses: Record<string, string> = {
   completed: 'Completed',
   completed_with_issues: 'Completed with issues',
   failed: 'Stopped',
+  repairing: 'Repairing appointment',
+  repair_attention: 'Repair needs review',
 };
 const previewColumns = [
   'Date',
@@ -162,7 +169,7 @@ async function defaultApi(body: Record<string, unknown>) {
 function State({ status }: { status: string }) {
   return (
     <span className={'state state-' + status}>
-      {['generating', 'running'].includes(status) && (
+      {['generating', 'running', 'repairing'].includes(status) && (
         <span className="pulse-dot" />
       )}
       {statuses[status] || status}
@@ -244,6 +251,14 @@ export default function WaveBot({
     [reason, setReason] = useState(''),
     [replacement, setReplacement] = useState<File | null>(null),
     [sheetName, setSheetName] = useState('');
+  const [repair, setRepair] = useState<{
+    runId: string;
+    row: Row;
+    rowIndex: number;
+    updatedAt: string;
+    repairId: string;
+  } | null>(null);
+  const actionInFlight = useRef(false);
   const selectedId = useRef(''),
     requestVersion = useRef(0),
     fileInput = useRef<HTMLInputElement>(null);
@@ -297,7 +312,9 @@ export default function WaveBot({
       cancelled = true;
     };
   }, [refresh]);
-  const active = runs.some((r) => ['generating', 'running'].includes(r.status));
+  const active = runs.some((r) =>
+    ['generating', 'running', 'repairing'].includes(r.status),
+  );
   useEffect(() => {
     const timer = setInterval(
       () => {
@@ -317,29 +334,35 @@ export default function WaveBot({
   async function perform(action: string, extras: Record<string, unknown> = {}) {
     if (
       busy ||
+      actionInFlight.current ||
       !viewer ||
       (readOnly && !(action === 'generate' && allowPreparation))
     )
       return;
+    actionInFlight.current = true;
     setBusy(action);
     setError('');
     setNotice('');
     try {
       const result = await api({ action, runId: selected?.runId, ...extras });
       setDecision(null);
+      setRepair(null);
       setReason('');
       setNotice(
         action === 'generate'
           ? 'Preparing the wave file. It will wait here for approval.'
           : action === 'reject'
             ? 'File rejected. Choose a replacement workbook below.'
-            : 'Run accepted. Blue Yonder processing has started.',
+            : action === 'repair'
+              ? 'Appointment repair accepted. Its checks and recorded actions will appear below.'
+              : 'Run accepted. Blue Yonder processing has started.',
       );
       await refresh();
       if (result.runId) await detail(result.runId);
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      actionInFlight.current = false;
       setBusy('');
     }
   }
@@ -398,7 +421,14 @@ export default function WaveBot({
     }
   }
   const queue = runs.filter((r) =>
-    ['pending', 'rejected', 'generating', 'running'].includes(r.status),
+    [
+      'pending',
+      'rejected',
+      'generating',
+      'running',
+      'repairing',
+      'repair_attention',
+    ].includes(r.status),
   );
   const pending = runs.filter((r) => r.status === 'pending').length;
   const waves = runs.reduce((s, r) => s + number(r.summary.wavesCreated), 0),
@@ -997,9 +1027,10 @@ export default function WaveBot({
                       </Button>
                     </div>
                     <p className="table-footnote">
-                      Check each listed load in Blue Yonder, including any
-                      successfully recovered load. Allocation and recovery
-                      details describe the run, not the current live state.
+                      Repair one outbound load at a time. Each repair rechecks
+                      Blue Yonder before making changes. Verify every repaired
+                      load manually. Recorded details describe the run, not the
+                      current live state.
                     </p>
                     {conflictRows.length > 0 ? (
                       <div className="scroll-table">
@@ -1025,6 +1056,41 @@ export default function WaveBot({
                                   <strong>{row.load || '—'}</strong>
                                   <br />
                                   {row.order || '—'}
+                                  <div className="repair-control">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={
+                                        readOnly ||
+                                        !!busy ||
+                                        runs.some(
+                                          (r) => r.status === 'repairing',
+                                        ) ||
+                                        !!repairUnavailable(
+                                          resultRows[Number(row.rowIndex)],
+                                          selected.status,
+                                        )
+                                      }
+                                      onClick={() => {
+                                        setError('');
+                                        setRepair({
+                                          runId: selected.runId,
+                                          row: resultRows[Number(row.rowIndex)],
+                                          rowIndex: Number(row.rowIndex),
+                                          updatedAt: selected.updatedAt,
+                                          repairId: crypto.randomUUID(),
+                                        });
+                                      }}
+                                    >
+                                      Repair appointment
+                                    </Button>
+                                    <p className="muted">
+                                      {repairUnavailable(
+                                        resultRows[Number(row.rowIndex)],
+                                        selected.status,
+                                      )}
+                                    </p>
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   {time(String(row.requestedStart))}
@@ -1075,6 +1141,28 @@ export default function WaveBot({
                           ? 'No existing-appointment conflicts were recorded for this run.'
                           : 'Appointment checks will appear here after production finishes.'}
                       </p>
+                    )}
+                    {!!selected.summary.appointmentRepairs?.length && (
+                      <details className="repair-history">
+                        <summary>
+                          Repair history (
+                          {selected.summary.appointmentRepairs.length})
+                        </summary>
+                        {selected.summary.appointmentRepairs.map(
+                          (attempt, index) => (
+                            <div key={index} className="repair-history-item">
+                              <strong>
+                                {attempt.load} · {attempt.recoveryStatus}
+                              </strong>
+                              <p>
+                                {time(String(attempt.repairStartedAt || ''))} ·{' '}
+                                {attempt.repairBy}
+                              </p>
+                              <p>{attempt.recoveryNote}</p>
+                            </div>
+                          ),
+                        )}
+                      </details>
                     )}
                   </TabsContent>
                   <TabsContent value="results">
@@ -1366,6 +1454,74 @@ export default function WaveBot({
           </span>
         </footer>
       </section>
+      <Dialog
+        open={repair !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setRepair(null);
+        }}
+      >
+        <DialogContent className="decision-dialog" showCloseButton={!busy}>
+          <DialogTitle>Repair this appointment in Blue Yonder?</DialogTitle>
+          <DialogDescription>
+            This changes production records after checking the current
+            allocation. An eligible unallocated wave and its old appointment
+            will be deleted, then a replacement appointment will be created.
+            Allocated waves stay unchanged.
+          </DialogDescription>
+          <div className="decision-file">
+            <Truck />
+            <div>
+              <strong>
+                Load {repair?.row.carMoveId} · Order {repair?.row.ordnum}
+              </strong>
+              <span>
+                {time(String(repair?.row.startIso || ''))} to{' '}
+                {time(String(repair?.row.endIso || ''))} · Arizona
+              </span>
+            </div>
+          </div>
+          <p>
+            The saved file sets the requested time. If the appointment already
+            matches, it stays unchanged. This action does not recreate the wave
+            or rerun the workbook.
+          </p>
+          <p>
+            If a change cannot be confirmed, the repair stops for manual review.
+            Check the recorded result before taking any further action.
+          </p>
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={!!busy}
+              onClick={() => setRepair(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={readOnly || !!busy || !repair}
+              onClick={() =>
+                repair &&
+                void perform('repair', {
+                  runId: repair.runId,
+                  rowIndex: repair.rowIndex,
+                  load: repair.row.carMoveId,
+                  expectedUpdatedAt: repair.updatedAt,
+                  repairId: repair.repairId,
+                  confirm: true,
+                })
+              }
+            >
+              {busy && <LoaderCircle className="spin" />} Confirm repair in Blue
+              Yonder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={decision !== null}
         onOpenChange={(open) => {

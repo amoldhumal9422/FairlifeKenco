@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   appointmentConflicts,
   hasAppointmentConflict,
+  repairUnavailable,
 } from '../lib/appointment-conflicts.ts';
 
 test('historical load conflicts are visible without inventing recovery actions', () => {
@@ -23,6 +24,37 @@ test('historical load conflicts are visible without inventing recovery actions',
   assert.equal(rows[0].allocation, 'Not recorded');
   assert.equal(rows[0].waveDeleted, 'Not recorded');
   assert.equal(rows[0].outcome, 'Manual review required');
+});
+
+test('repair availability preserves original result indices and blocks past or already changed loads', () => {
+  const row = {
+    direction: 'OB',
+    carMoveId: 'LOAD',
+    carcod: 'TEST',
+    slotId: 'AMBIENT_SOUTH_DOORS',
+    startIso: '2030-01-02T10:00:00-07:00',
+    appointmentConflict: true,
+  };
+  const now = Date.parse('2030-01-01T00:00:00Z');
+  assert.equal(repairUnavailable(row, 'completed_with_issues', now), '');
+  assert.equal(appointmentConflicts([{}, row])[0].rowIndex, 1);
+  assert.match(repairUnavailable(row, 'repairing', now), /progress/);
+  assert.match(
+    repairUnavailable(
+      { ...row, repairWriteAttempted: true },
+      'completed_with_issues',
+      now,
+    ),
+    /Review/,
+  );
+  assert.match(
+    repairUnavailable(
+      row,
+      'completed_with_issues',
+      Date.parse('2030-01-03T12:00:00Z'),
+    ),
+    /passed/,
+  );
 });
 
 test('slot and closed-hours warnings do not enter the appointment conflict list', () => {
