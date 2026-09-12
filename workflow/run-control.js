@@ -1,4 +1,4 @@
-// Embedded in the workflow's run-control Code nodes. No network calls here.
+import { executionProgress } from './execution-progress.js';
 const activeRunStates = ['generating', 'running', 'repairing'];
 const activeExecutionStates = ['new', 'running', 'waiting', 'unknown'];
 function controlReply(httpStatus, response) {
@@ -96,7 +96,11 @@ export function inspectExecution(
         'n8n has not confirmed that the run stopped. Refresh its status before retrying.',
       );
     if (context.action === 'stop') return { ...context, controlRoute: 1 };
-    return controlReply(200, { runId: context.runId, status: context.status });
+    return controlReply(200, {
+      runId: context.runId,
+      status: context.status,
+      progress: executionProgress(context, execution, context.checkedAt),
+    });
   }
   if (
     !['success', 'error', 'crashed', 'canceled', 'cancelled'].includes(
@@ -124,6 +128,7 @@ export function inspectExecution(
     at: context.checkedAt,
     executionId: context.targetExecutionId,
     executionStatus: execution.status,
+    progress: executionProgress(context, execution, context.checkedAt),
   };
   if (repairing && summary.repairActive)
     summary.repairActive = {
