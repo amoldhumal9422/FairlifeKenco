@@ -1,4 +1,5 @@
 'use client';
+import './run-controls.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +45,13 @@ import {
 } from 'lucide-react';
 import { canStopRun, canDiscardRun } from '@/lib/run-controls';
 import WaveAnalytics from './wave-analytics';
+import RunMonitor from './run-monitor';
+import ReviewCleanup from './review-cleanup';
+import {
+  displayProgress,
+  filterRuns,
+  type ProgressSnapshot,
+} from '@/lib/run-progress';
 import {
   appointmentConflicts,
   repairUnavailable,
@@ -62,6 +70,7 @@ type Summary = {
   error?: string;
   appointmentRepairs?: Row[];
   repairActive?: Row | null;
+  runControl?: { progress?: ProgressSnapshot };
 };
 export type Run = {
   runId: string;
@@ -95,6 +104,7 @@ export type ApiResponse = {
   runId?: string;
   status?: string;
   message?: string;
+  progress?: ProgressSnapshot;
 };
 export type ApiClient = (body: Record<string, unknown>) => Promise<ApiResponse>;
 const statuses: Record<string, string> = {
@@ -266,6 +276,15 @@ export default function WaveBot({
   } | null>(null);
   const actionInFlight = useRef(false);
   const refreshInFlight = useRef(false);
+  const [progress, setProgress] = useState<Record<string, ProgressSnapshot>>(
+    {},
+  );
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyStatus, setHistoryStatus] = useState('all');
+  const [historyDate, setHistoryDate] = useState('');
+  const [rowCategory, setRowCategory] = useState('all');
+  const [refreshing, setRefreshing] = useState(false);
   const [control, setControl] = useState<{
     action: 'stop' | 'discard';
     run: Run;
@@ -290,6 +309,7 @@ export default function WaveBot({
   const refresh = useCallback(async () => {
     if (!viewer || refreshInFlight.current) return;
     refreshInFlight.current = true;
+    setRefreshing(true);
     try {
       let result = await api({ action: 'list' });
       let statusError = '';
@@ -299,6 +319,16 @@ export default function WaveBot({
           activeRuns.map((r) => api({ action: 'sync', runId: r.runId })),
         );
         const unavailable = checks.find((r) => r.status === 'rejected');
+        const snapshots: Record<string, ProgressSnapshot> = {};
+        for (const check of checks) {
+          if (
+            check.status === 'fulfilled' &&
+            check.value.runId &&
+            check.value.progress
+          )
+            snapshots[check.value.runId] = check.value.progress;
+        }
+        setProgress((previous) => ({ ...previous, ...snapshots }));
         if (unavailable?.status === 'rejected')
           statusError =
             unavailable.reason instanceof Error
@@ -319,7 +349,11 @@ export default function WaveBot({
           setSelected(run);
       } else if (!selectedId.current && latest.length) {
         await detail(
-          (latest.find((r) => r.status === 'pending') || latest[0]).runId,
+          (
+            latest.find((r) => canStopRun(r.status)) ||
+            latest.find((r) => r.status === 'pending') ||
+            latest[0]
+          ).runId,
         );
       }
       setError(statusError);
@@ -327,6 +361,7 @@ export default function WaveBot({
       setError((e as Error).message);
     } finally {
       refreshInFlight.current = false;
+      setRefreshing(false);
       setLoading(false);
     }
   }, [viewer, api, detail]);
@@ -398,6 +433,40 @@ export default function WaveBot({
       actionInFlight.current = false;
       setBusy('');
     }
+  }
+  async function removeReviewFiles(files: Run[]) {
+    if (readOnly || !viewer || busy || actionInFlight.current) return;
+    actionInFlight.current = true;
+    setBusy('cleanup');
+    setError('');
+    setNotice('');
+    let removed = 0;
+    const failed: string[] = [];
+    for (const run of files) {
+      try {
+        const result = await api({
+          action: 'discard',
+          runId: run.runId,
+          expectedUpdatedAt: run.updatedAt,
+          confirm: true,
+        });
+        if (result.status !== 'discarded')
+          throw new Error(
+            'Removal was not confirmed. Refresh this run before retrying.',
+          );
+        removed++;
+      } catch (e) {
+        failed.push(`Run ${run.runId}: ${(e as Error).message}`);
+      }
+    }
+    setCleanupOpen(false);
+    await refresh();
+    setNotice(
+      `${removed} ${removed === 1 ? 'file removed' : 'files removed'} from review. Workbooks and history are retained.`,
+    );
+    if (failed.length) setError(failed.join(' '));
+    actionInFlight.current = false;
+    setBusy('');
   }
   async function download(run: Run, original = false) {
     setBusy('download');
@@ -475,11 +544,19 @@ export default function WaveBot({
     );
   const visibleRows = (selected?.preview || []).filter(
     (r) =>
-      !query ||
-      Object.values(r).some((v) =>
-        String(v).toLowerCase().includes(query.toLowerCase()),
-      ),
+      (rowCategory === 'all' || String(r['Load Type'] || '') === rowCategory) &&
+      (!query ||
+        Object.values(r).some((v) =>
+          String(v).toLowerCase().includes(query.toLowerCase()),
+        )),
   );
+  const visibleHistory = filterRuns(
+    runs,
+    historyQuery,
+    historyStatus,
+    historyDate,
+  );
+  const activeRuns = runs.filter((r) => canStopRun(r.status));
   const resultRows = selected?.summary.results || [];
   const conflictRows = appointmentConflicts(resultRows);
   const reviewedCount = number(selected?.metadata.readyRows),
@@ -569,12 +646,9 @@ export default function WaveBot({
         </header>
         <div className="page-heading">
           <div>
-            <h1>
-              Wave overview<span className="heading-period">.</span>
-            </h1>
+            <h1>Wave Bot</h1>
             <p className="muted">
-              Prepare wave files, approve or replace them, and track Blue Yonder
-              results.
+              Prepare tomorrow’s file, review the loads, and control each run.
             </p>
           </div>
           <div className="heading-actions">
@@ -582,10 +656,11 @@ export default function WaveBot({
               variant="outline"
               className="refresh"
               onClick={() => void refresh()}
-              disabled={!!busy || !viewer}
+              disabled={!!busy || !viewer || refreshing}
               aria-label="Refresh runs"
             >
-              <RefreshCw className={loading ? 'spin' : ''} />
+              <RefreshCw className={loading || refreshing ? 'spin' : ''} />{' '}
+              Refresh
             </Button>
             {active && (
               <Button
@@ -603,6 +678,13 @@ export default function WaveBot({
                 <Square /> Stop workflow
               </Button>
             )}
+            <Button
+              variant="outline"
+              disabled={readOnly || !!busy || !viewer}
+              onClick={() => setCleanupOpen(true)}
+            >
+              <Trash2 /> Clear old review files
+            </Button>
             <Button
               className="primary-action"
               onClick={() => void perform('generate')}
@@ -671,6 +753,99 @@ export default function WaveBot({
             </Button>
           </output>
         )}
+        {!!activeRuns.length && (
+          <section className="active-runs" aria-label="Active runs">
+            <div className="active-runs-heading">
+              <h2>
+                <Activity /> Active runs
+              </h2>
+              <span>Updates every 15 seconds</span>
+            </div>
+            {activeRuns.map((run) => {
+              const p = displayProgress(run, progress[run.runId]);
+              return (
+                <div className="active-run" key={run.runId}>
+                  <button
+                    className="active-run-open"
+                    onClick={() => {
+                      void detail(run.runId).catch((e) => setError(e.message));
+                      document
+                        .getElementById('review')
+                        ?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                  >
+                    <span className="pulse-dot" />
+                    <span>
+                      <strong>
+                        Run {run.runId} · {statuses[run.status]}
+                      </strong>
+                      <small>{p.stage}</small>
+                    </span>
+                    <b>{p.percent === null ? '—' : `${p.percent}%`}</b>
+                  </button>
+                  <Button
+                    variant="destructive"
+                    disabled={readOnly || !!busy}
+                    onClick={() => setControl({ action: 'stop', run })}
+                  >
+                    <Square /> Stop run {run.runId}
+                  </Button>
+                </div>
+              );
+            })}
+          </section>
+        )}
+        <details className="workflow-guide">
+          <summary>How Wave Bot works & current rules</summary>
+          <div className="workflow-guide-grid">
+            <section>
+              <h3>Prepare → Review → Run</h3>
+              <p>
+                Prepare file gathers SharePoint orders and OpenDock appointments
+                for tomorrow in Arizona. Download and review the workbook, then
+                approve it or reject it and upload a replacement.
+              </p>
+              <p>
+                Production begins only when you approve or submit a replacement.
+                Stop targets the selected execution; it does not undo completed
+                warehouse work.
+              </p>
+            </section>
+            <section>
+              <h3>Outbound Load Type</h3>
+              <ol>
+                <li>
+                  <strong>Chilled</strong> → Outbound Refrigeration (Chilled)
+                </li>
+                <li>
+                  Otherwise, customer contains{' '}
+                  <strong>Costco or Sams / Sam’s</strong> → Wholesale Club
+                  Stores
+                </li>
+                <li>
+                  Otherwise → <strong>Bottler Ambient</strong>
+                </li>
+              </ol>
+              <p>
+                Uses the matched SharePoint row. Chilled takes priority. Inbound
+                categories stay as booked.
+              </p>
+            </section>
+            <section>
+              <h3>Conflicting appointments</h3>
+              <p>
+                Review the affected load before confirming a repair. Allocated
+                or active work stays protected. The repair verifies or moves the
+                existing appointment first, then creates or verifies the
+                intended wave.
+              </p>
+              <p>
+                Different or uncertain links require manual review. No automatic
+                wave deletion or appointment recreation.
+              </p>
+            </section>
+          </div>
+        </details>
         <div className="metrics" aria-label="Totals across the latest 100 runs">
           {[
             {
@@ -715,11 +890,6 @@ export default function WaveBot({
             </div>
           ))}
         </div>
-        <WaveAnalytics
-          rows={selected?.preview || []}
-          planDate={selected?.planDate || ''}
-          loading={loading}
-        />
         <div className="section-title">
           <FileSpreadsheet />
           <h2>File review</h2>
@@ -756,6 +926,7 @@ export default function WaveBot({
                   key={run.runId}
                   onClick={() => {
                     setQuery('');
+                    setRowCategory('all');
                     void detail(run.runId).catch((e) => setError(e.message));
                   }}
                 >
@@ -771,7 +942,8 @@ export default function WaveBot({
                   <span className="file-label">
                     {run.replacementFileName ||
                       run.fileName ||
-                      'Gathering appointments and orders'}
+                      progress[run.runId]?.stage ||
+                      'Waiting for the first saved step'}
                   </span>
                   <div className="queue-meta">
                     <State status={run.status} />
@@ -818,6 +990,10 @@ export default function WaveBot({
                   </div>
                   <State status={selected.status} />
                 </div>
+                <RunMonitor
+                  run={selected}
+                  snapshot={progress[selected.runId]}
+                />
                 {(canStopRun(selected.status) ||
                   canDiscardRun(selected.status)) && (
                   <div className="run-control-bar">
@@ -862,31 +1038,6 @@ export default function WaveBot({
                   </span>
                   <span>Phoenix time</span>
                 </div>
-                {selected.status === 'generating' && (
-                  <div className="run-notice">
-                    <LoaderCircle className="spin" />
-                    <div>
-                      <strong>Gathering appointments and orders</strong>
-                      <p>
-                        The workbook will appear here when preparation finishes.
-                        No warehouse changes have started.
-                      </p>
-                    </div>
-                  </div>
-                )}
-                {selected.status === 'running' && (
-                  <div className="run-notice">
-                    <Activity />
-                    <div>
-                      <strong>Processing accepted workbook</strong>
-                      <p>
-                        Results update here after the run finishes. Approved by{' '}
-                        {selected.decisionBy || selected.requestedBy} at{' '}
-                        {time(selected.decisionAt || selected.startedAt)}.
-                      </p>
-                    </div>
-                  </div>
-                )}
                 {selected.summary.error && (
                   <div className="inline-error">
                     <AlertTriangle />
@@ -1044,6 +1195,37 @@ export default function WaveBot({
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                       />
+                      <select
+                        className="desk-select"
+                        aria-label="Filter workbook by load type"
+                        value={rowCategory}
+                        onChange={(e) => setRowCategory(e.target.value)}
+                      >
+                        <option value="all">All load types</option>
+                        {Array.from(
+                          new Set(
+                            (selected.preview || [])
+                              .map((r) => String(r['Load Type'] || ''))
+                              .filter(Boolean),
+                          ),
+                        )
+                          .sort()
+                          .map((type) => (
+                            <option key={type}>{type}</option>
+                          ))}
+                      </select>
+                      <Button
+                        variant="outline"
+                        disabled={!visibleRows.length || !!busy}
+                        onClick={() =>
+                          csv(
+                            visibleRows,
+                            `wave-${selected.runId}-filtered.csv`,
+                          )
+                        }
+                      >
+                        <Download /> Export filtered rows
+                      </Button>
                       <span>{visibleRows.length} rows</span>
                       {selected.fileName && (
                         <Button
@@ -1513,6 +1695,76 @@ export default function WaveBot({
           <span>Latest 100 runs</span>
         </div>
         <section className="panel history">
+          <div className="history-filters">
+            <label htmlFor="history-search">
+              Search runs
+              <Input
+                id="history-search"
+                value={historyQuery}
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                placeholder="Run ID, workbook, operator…"
+              />
+            </label>
+            <label htmlFor="history-status">
+              Status
+              <select
+                id="history-status"
+                aria-label="Filter history by status"
+                className="desk-select"
+                value={historyStatus}
+                onChange={(e) => setHistoryStatus(e.target.value)}
+              >
+                <option value="all">All statuses</option>
+                {Object.entries(statuses).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor="history-date">
+              Appointment date
+              <Input
+                id="history-date"
+                type="date"
+                value={historyDate}
+                onChange={(e) => setHistoryDate(e.target.value)}
+              />
+            </label>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setHistoryQuery('');
+                setHistoryStatus('all');
+                setHistoryDate('');
+              }}
+            >
+              Reset filters
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!visibleHistory.length}
+              onClick={() =>
+                csv(
+                  visibleHistory.map((r) => ({
+                    runId: r.runId,
+                    appointmentDate: r.planDate,
+                    workbook: r.replacementFileName || r.fileName,
+                    status: statuses[r.status] || r.status,
+                    executionId: r.executionId,
+                    waves: r.summary.wavesCreated || 0,
+                    issues: r.summary.failed || 0,
+                  })),
+                  'wave-run-history.csv',
+                )
+              }
+            >
+              <Download /> Export history
+            </Button>
+            <span>
+              {visibleHistory.length} of {runs.length} runs
+            </span>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -1527,7 +1779,7 @@ export default function WaveBot({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {runs.map((r) => (
+              {visibleHistory.map((r) => (
                 <TableRow key={r.runId}>
                   <TableCell>{date(r.planDate)}</TableCell>
                   <TableCell>
@@ -1568,14 +1820,21 @@ export default function WaveBot({
               ))}
             </TableBody>
           </Table>
-          {!runs.length && (
+          {!visibleHistory.length && (
             <p className="table-empty">
               {loading
                 ? 'Loading run history…'
-                : 'Run history will fill in as files are prepared and processed.'}
+                : runs.length
+                  ? 'No runs match these filters.'
+                  : 'Run history will fill in as files are prepared and processed.'}
             </p>
           )}
         </section>
+        <WaveAnalytics
+          rows={selected?.preview || []}
+          planDate={selected?.planDate || ''}
+          loading={loading}
+        />
         <footer className="desk-footer">
           <span>
             Wave Bot <span className="footer-divider">/</span> fairlife Arizona
@@ -1587,6 +1846,14 @@ export default function WaveBot({
           </span>
         </footer>
       </section>
+      {cleanupOpen && (
+        <ReviewCleanup
+          runs={runs}
+          busy={!!busy}
+          onClose={() => setCleanupOpen(false)}
+          onRemove={(files) => void removeReviewFiles(files)}
+        />
+      )}
       <Dialog
         open={control !== null}
         onOpenChange={(open) => !open && !busy && setControl(null)}

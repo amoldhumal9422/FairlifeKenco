@@ -2,6 +2,23 @@
 
 Wave Bot is the review dashboard for fairlife Arizona wave operations. Prepare a workbook from SharePoint and OpenDock, review it, then approve it or upload a replacement. Once connected to the production backend, the dashboard records decisions and displays Blue Yonder results.
 
+## Operator controls
+
+- Each active run shows its own **Stop** button and run ID. Confirming stops that execution; it does not undo completed warehouse changes.
+- **Run details & recent steps** shows the execution link, recorded steps, timestamps, and row counts. Preparation, production, and appointment repair have separate progress displays.
+- Percentages follow saved stages. During production, the middle portion advances with rows returned to the row loop, including rows with issues. A completed preparation means the file is ready for review; it does not mean production has run. The display never advances based on elapsed time.
+- The website checks active runs every 15 seconds. Delayed updates and long gaps between saved steps are shown explicitly. Earlier executions without saved progress may show an unknown percentage.
+- **Clear old review files** lets an operator select eligible files created on or before a chosen Phoenix date. Each removal is checked independently against its saved status and update time. Active runs, completed production, and repairs needing review cannot be cleared. Workbooks and history remain available.
+- Run history supports search, status/date filters, and CSV export. Workbook previews support Load Type filtering and filtered CSV export.
+
+The outbound classification uses the matched SharePoint WAVING DATA row: **Chilled** first, then **Costco or Sams / Sam's** in Ship to Customer, otherwise **Bottler Ambient**. Case, spacing, and apostrophes are normalized. Inbound categories and unmatched-order review behavior are preserved.
+
+### Progress reporting in n8n
+
+`workflow/execution-progress.js` is embedded alongside `workflow/run-control.js` in the three run-control Code nodes. `sync` returns only a compact progress object; raw node inputs, credentials, and service responses are not sent to the website. The n8n execution reads request data, and **Save execution progress** is enabled so completed steps are available during future runs. This adds a save after each node and can increase latency. No automatic restart, retry, or rollback has been added.
+
+These controls and percentages are tested with simulated execution data. Browser tests exercise stop and removal using an intercepted API with no external requests or Blue Yonder changes.
+
 ## Run locally
 
 Use Node.js 22.13 or later.

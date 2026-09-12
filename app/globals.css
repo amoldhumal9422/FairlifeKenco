@@ -515,7 +515,7 @@ h1 {
 }
 .refresh {
   height: 41px;
-  width: 41px;
+  width: auto;
   background: #1b1f23;
 }
 .refresh > svg {
@@ -1786,7 +1786,7 @@ h1 {
     font-size: 14px;
     max-width: 440px;
   }
-  .heading-actions {
+.heading-actions {
     width: 100%;
     flex-direction: row-reverse;
   }
