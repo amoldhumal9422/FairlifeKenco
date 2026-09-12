@@ -1201,13 +1201,31 @@ export default function WaveBot({
                                   {row.details}
                                 </TableCell>
                                 <TableCell className="result-notes">
+                                  Appointment verified:{' '}
+                                  {row.appointmentVerified}
+                                  <br />
+                                  Appointment reused: {row.appointmentReused}
+                                  <br />
+                                  Appointment moved: {row.appointmentMoved}
+                                  <br />
+                                  {!!row.verifiedAppointmentStart && (
+                                    <>
+                                      Verified time:{' '}
+                                      {time(
+                                        String(row.verifiedAppointmentStart),
+                                      )}{' '}
+                                      to{' '}
+                                      {time(String(row.verifiedAppointmentEnd))}
+                                      <br />
+                                      Door group: {row.verifiedAppointmentSlot}
+                                      <br />
+                                    </>
+                                  )}
                                   Wave created: {row.waveCreated}
                                   <br />
                                   Wave reused: {row.waveReused}
                                   <br />
                                   Wave linked: {row.waveLinked}
-                                  <br />
-                                  Appointment moved: {row.appointmentMoved}
                                   <br />
                                   Wave deleted: {row.waveDeleted}
                                   <br />
@@ -1630,10 +1648,10 @@ export default function WaveBot({
         <DialogContent className="decision-dialog" showCloseButton={!busy}>
           <DialogTitle>Repair this appointment in Blue Yonder?</DialogTitle>
           <DialogDescription>
-            This changes production records after checking allocation and
-            ownership. The saved wave is created if missing, or reused if it
-            already belongs to this load and shipment. An old unallocated wave
-            with a different name is replaced. Allocated waves stay unchanged.
+            This checks allocation and ownership, then reuses or moves the
+            existing appointment to the saved date, time and door group. The
+            appointment and load assignment must be verified before a missing
+            wave is created. Allocated waves stay unchanged.
           </DialogDescription>
           <div className="decision-file">
             <Truck />
@@ -1651,14 +1669,15 @@ export default function WaveBot({
             </div>
           </div>
           <p>
-            Once the wave and shipment link are verified, the existing
-            appointment moves to the saved date, time and slot. Its appointment
-            ID is kept. If the time already matches, no appointment update is
-            sent.
+            The appointment ID is kept. A correct appointment needs no update.
+            The saved wave is then created if missing or reused if correctly
+            linked. A different wave name stops for manual review; no wave or
+            appointment is automatically deleted.
           </p>
           <p>
-            If a change cannot be confirmed, the repair stops for manual review.
-            Check the recorded result before taking any further action.
+            If the appointment update fails, no wave is created. If wave setup
+            fails after the appointment is verified, the recorded result shows
+            that partial completion and requires manual review.
           </p>
           {error && (
             <p className="inline-error" role="alert">

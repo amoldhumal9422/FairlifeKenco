@@ -153,3 +153,28 @@ test('wave and appointment audit distinguishes saved intent from verified action
   assert.equal(repaired.appointmentMoved, 'Yes');
   assert.equal(repaired.newAppointment, 'SAME-ID');
 });
+
+test('partial repairs expose the confirmed appointment separately from an unconfirmed wave', () => {
+  const [r] = appointmentConflicts([
+    {
+      appointmentConflict: true,
+      carMoveId: 'LOAD',
+      appointmentMoved: true,
+      appointmentVerified: true,
+      appointmentReused: false,
+      verifiedAppointmentStart: '2030-01-02T10:00:00-07:00',
+      verifiedAppointmentEnd: '2030-01-02T12:00:00-07:00',
+      verifiedAppointmentSlot: 'AMBIENT_SOUTH_DOORS',
+      waveCreated: false,
+      waveLinked: false,
+      recoveryStatus: 'Manual review required',
+    },
+  ]);
+  assert.equal(r.appointmentMoved, 'Yes');
+  assert.equal(r.appointmentVerified, 'Yes');
+  assert.equal(r.appointmentReused, 'No');
+  assert.equal(r.waveCreated, 'No');
+  assert.equal(r.waveLinked, 'No');
+  assert.equal(r.verifiedAppointmentSlot, 'AMBIENT_SOUTH_DOORS');
+  assert.equal(r.outcome, 'Manual review required');
+});

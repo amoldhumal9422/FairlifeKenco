@@ -126,7 +126,11 @@ function simulate({
     if (s.phase === 'done') break;
     const phase = s.phase;
     visited.push(phase);
-    requests.push({ phase, ...s.request });
+    requests.push({
+      phase,
+      ...s.request,
+      appointmentVerified: s.audit.appointmentVerified,
+    });
     let result;
     if (overrides[phase])
       result = overrides[phase]({
@@ -141,16 +145,19 @@ function simulate({
         case 'load':
         case 'recheckLoad':
         case 'verifyMovedLoad':
+        case 'loadBeforeWave':
+        case 'verifyFinalLoad':
           result = response([load()]);
           break;
         case 'appointment':
         case 'recheckAppointment':
         case 'verifyMovedAppointment':
+        case 'appointmentBeforeWave':
+        case 'verifyFinalAppointment':
           result = response(currentAppointment);
           break;
         case 'waves':
         case 'recheckWaves':
-        case 'verifyWavesGone':
         case 'verifyCreatedWaves':
         case 'verifyFinalWaves':
         case 'shipmentWaves':
@@ -185,19 +192,6 @@ function simulate({
           result = response([
             { shipmentId: 'SHIP-1', shipmentLineId: 'LINE-1' },
           ]);
-          break;
-        case 'cancelWave':
-          result = response(
-            {
-              asynchronousResources_uri:
-                base + '/waves/cancelWave/async/TASK/resources',
-            },
-            202,
-          );
-          break;
-        case 'pollWave':
-          currentWave = null;
-          result = response([{ asynchronousStatus: 'COMPLETE' }]);
           break;
         case 'createWave':
           result = response(
@@ -241,33 +235,31 @@ function unchanged(result) {
   assert.equal(result.s.audit.waveCreated, false);
 }
 
-test('a missing linked wave is created with the saved name and shipment before the appointment moves', () => {
+test('the appointment is moved and verified before a missing wave is created', () => {
   const { s, writes, visited } = simulate();
   assert.deepEqual(
     writes.map((r) => r.phase),
-    ['createWave', 'moveAppointment'],
+    ['moveAppointment', 'createWave'],
   );
-  assert.deepEqual(writes[0].body, {
+  assert.deepEqual(writes[1].body, {
     shipmentList: "'SHIP-1'",
     dtlFlg: 0,
     warehouseId: 'AZ02',
     waveNumber: 'WAVE-1',
     waveSet: '',
   });
-  assert.match(writes[0].url, /car_move_id=LOAD-1/);
+  assert.match(writes[1].url, /car_move_id=LOAD-1/);
   assert(
-    visited.indexOf('verifyCreatedWaves') < visited.indexOf('moveAppointment'),
+    visited.indexOf('verifyMovedAppointment') < visited.indexOf('createWave'),
   );
-  assert(
-    visited.lastIndexOf('recheckShipmentWaves') <
-      visited.indexOf('moveAppointment'),
-  );
-  assert.equal(writes[1].method, 'PUT');
-  assert.match(writes[1].url, /appointments\/APP-OLD\?ignoreWarnings=false/);
-  assert.equal(writes[1].body.startDate, row.startIso);
-  assert.equal(writes[1].body.endDate, row.endIso);
-  assert.equal(writes[1].body.externalAppointmentId, 'KEEP-ME');
-  assert.equal(writes[1].body.noteText, 'Existing appointment note');
+  assert(visited.indexOf('verifyMovedLoad') < visited.indexOf('createWave'));
+  assert.equal(writes[1].appointmentVerified, true);
+  assert.equal(writes[0].method, 'PUT');
+  assert.match(writes[0].url, /appointments\/APP-OLD\?ignoreWarnings=false/);
+  assert.equal(writes[0].body.startDate, row.startIso);
+  assert.equal(writes[0].body.endDate, row.endIso);
+  assert.equal(writes[0].body.externalAppointmentId, 'KEEP-ME');
+  assert.equal(writes[0].body.noteText, 'Existing appointment note');
   assert.equal(s.audit.waveCreated, true);
   assert.equal(s.audit.waveLinked, true);
   assert.equal(s.audit.appointmentMoved, true);
@@ -291,18 +283,14 @@ test('a correctly linked planned wave is reused without creating a duplicate', (
   assert.equal(s.audit.waveDeleted, false);
   assert.equal(s.audit.waveLinked, true);
 });
-test('an old unallocated wave is replaced with the saved wave before the appointment moves', () => {
-  const { s, writes, visited } = simulate({ existing: 'OLD-WAVE' });
-  assert.deepEqual(
-    writes.map((r) => r.phase),
-    ['cancelWave', 'createWave', 'moveAppointment'],
-  );
-  assert.equal(writes[0].body.waveNumber, 'OLD-WAVE');
-  assert.equal(writes[1].body.waveNumber, 'WAVE-1');
-  assert(visited.indexOf('verifyWavesGone') < visited.indexOf('createWave'));
+test('a different unallocated wave name stops for review without deletion', () => {
+  const r = simulate({ existing: 'OLD-WAVE' });
+  unchanged(r);
+  const { s } = r;
   assert.equal(s.audit.previousWave, 'OLD-WAVE');
-  assert.equal(s.audit.waveDeleted, true);
-  assert.equal(s.audit.waveCreated, true);
+  assert.match(s.audit.recoveryNote, /name differs/);
+  assert.equal(s.audit.waveDeleted, false);
+  assert.equal(s.audit.waveCreated, false);
   assert.equal(s.audit.appointmentDeleted, false);
 });
 test('allocated, unknown, active or shared waves never reach a write', () => {
@@ -434,7 +422,7 @@ test('an already correct appointment still gets its missing wave but requires no
   assert.equal(existing.s.audit.waveReused, true);
   assert.match(existing.s.audit.recoveryStatus, /already correct/i);
 });
-test('wave creation acceptance is insufficient: failures, timeouts and wrong links stop before moving the appointment', () => {
+test('wave creation failures preserve the verified appointment audit without claiming a completed wave', () => {
   for (const [phase, result] of [
     ['createWave', { error: 'timeout' }],
     [
@@ -449,34 +437,32 @@ test('wave creation acceptance is insufficient: failures, timeouts and wrong lin
     const r = simulate({ overrides: { [phase]: () => result } });
     assert.deepEqual(
       r.writes.map((r) => r.phase),
-      ['createWave'],
+      ['moveAppointment', 'createWave'],
     );
     assert.equal(r.s.audit.repairNeedsReview, true);
-    assert.equal(r.s.audit.appointmentMoved, false);
+    assert.equal(r.s.audit.appointmentMoved, true);
+    assert.equal(r.s.audit.appointmentVerified, true);
+    assert.equal(r.s.audit.verifiedAppointmentStart, row.startIso);
+    assert.match(r.s.audit.recoveryNote, /Appointment APP-OLD was verified/);
     assert.equal(r.s.audit.waveCreated, false);
   }
   const allocated = simulate({
     overrides: { wave: () => response({ ...wave(), waveStatus: 'ALOC' }) },
   });
-  assert.equal(allocated.writes.length, 1);
+  assert.equal(allocated.writes.length, 2);
   assert.equal(allocated.s.audit.repairNeedsReview, true);
 });
-test('failed wave deletion never reaches creation or appointment movement', () => {
-  for (const [phase, result] of [
-    ['cancelWave', { error: 'timeout' }],
-    ['pollWave', response([{ asynchronousStatus: 'FAILURE' }])],
-    ['verifyWavesGone', response([wave('OLD-WAVE')])],
-  ]) {
-    const r = simulate({
-      existing: 'OLD-WAVE',
-      overrides: { [phase]: () => result },
-    });
-    assert.deepEqual(
-      r.writes.map((r) => r.phase),
-      ['cancelWave'],
+test('removed deletion stages cannot be planned from an older saved state', () => {
+  for (const phase of [
+    'cancelWave',
+    'pollWave',
+    'verifyWavesGone',
+    'deleteAppointment',
+  ])
+    assert.throws(
+      () => planRepair({ ...startRepair(run(), request(), now), phase }, now),
+      /Unknown repair stage/,
     );
-    assert.equal(r.s.audit.repairNeedsReview, true);
-  }
 });
 test('failed or uncertain appointment movement is recorded without retry or a successful movement claim', () => {
   for (const [phase, result] of [
@@ -490,16 +476,79 @@ test('failed or uncertain appointment movement is recorded without retry or a su
     ],
     ['verifyMovedAppointment', response(app())],
     ['verifyMovedLoad', response([{ ...load(), appointmentId: 'OTHER' }])],
+  ]) {
+    for (const existing of [null, 'WAVE-1']) {
+      const r = simulate({ existing, overrides: { [phase]: () => result } });
+      assert.equal(r.writes.length, 1);
+      assert.equal(r.writes[0].phase, 'moveAppointment');
+      assert.equal(r.s.audit.appointmentMoved, false);
+      assert.equal(r.s.audit.repairNeedsReview, true);
+      if (phase === 'moveAppointment' && result.statusCode === 422)
+        assert.match(r.s.audit.recoveryNote, /Slot unavailable/);
+    }
+  }
+});
+test('changes after the appointment moves block wave creation and preserve partial progress', () => {
+  for (const [phase, result] of [
+    ['targetName', response([wave()])],
+    ['shipment', response({ ...shipment(), carrierMoveId: 'OTHER' })],
+    ['shipmentWaves', response([wave('OTHER')])],
+    ['loadPicks', response([{ pickId: 'PICK' }])],
+    ['wavableLines', response([])],
+    ['recheckAppointment', response(app())],
+    ['recheckLoad', response([{ ...load(), isLoading: 1 }])],
+    ['recheckWaves', response([wave()])],
+    ['appointmentBeforeWave', response(app())],
+    ['loadBeforeWave', response([{ ...load(), appointmentId: 'OTHER' }])],
+  ]) {
+    const r = simulate({
+      overrides: {
+        [phase]: ({ s }) => (s.audit.appointmentVerified ? result : undefined),
+      },
+    });
+    assert.deepEqual(
+      r.writes.map((r) => r.phase),
+      ['moveAppointment'],
+    );
+    assert.equal(r.s.audit.appointmentMoved, true);
+    assert.equal(r.s.audit.waveCreated, false);
+    assert.equal(r.s.audit.repairNeedsReview, true);
+  }
+});
+test('a wave allocated after appointment verification is protected without additional writes', () => {
+  const r = simulate({
+    existing: 'WAVE-1',
+    overrides: {
+      wave: ({ s }) =>
+        s.audit.appointmentVerified
+          ? response({ ...wave(), waveStatus: 'ALOC' })
+          : undefined,
+    },
+  });
+  assert.deepEqual(
+    r.writes.map((r) => r.phase),
+    ['moveAppointment'],
+  );
+  assert.equal(r.s.audit.appointmentMoved, true);
+  assert.equal(r.s.audit.allocationStatus, 'Allocated');
+  assert.equal(r.s.audit.repairNeedsReview, true);
+});
+test('final verification failures keep confirmed actions but cannot claim a completed repair', () => {
+  for (const [phase, result] of [
+    ['verifyFinalAppointment', response(app())],
+    ['verifyFinalLoad', response([{ ...load(), appointmentId: 'OTHER' }])],
     ['verifyFinalWaves', response([])],
     ['verifyFinalShipmentWaves', response([])],
   ]) {
-    const r = simulate({
-      existing: 'WAVE-1',
-      overrides: { [phase]: () => result },
-    });
-    assert.equal(r.writes.length, 1);
-    assert.equal(r.s.audit.appointmentMoved, false);
+    const r = simulate({ overrides: { [phase]: () => result } });
+    assert.deepEqual(
+      r.writes.map((r) => r.phase),
+      ['moveAppointment', 'createWave'],
+    );
+    assert.equal(r.s.audit.appointmentMoved, true);
+    assert.equal(r.s.audit.waveCreated, true);
     assert.equal(r.s.audit.repairNeedsReview, true);
+    assert.equal(r.s.audit.recoveryStatus, 'Manual review required');
   }
 });
 test('authorization, saved identity, dates and mutation replay are enforced', () => {
@@ -592,7 +641,7 @@ test('untrusted response destinations, HTML and pagination ambiguity stop the re
 test('the intended wave name is encoded without changing its saved spelling', () => {
   const name = 'AM 0102 1000 LOAD-1 000123';
   const r = simulate({ savedRow: { ...row, schbat: name } });
-  assert.equal(r.writes[0].body.waveNumber, name);
+  assert.equal(r.writes[1].body.waveNumber, name);
   assert.equal(r.s.audit.verifiedWave, name);
   assert.match(
     r.requests.find((r) => r.phase === 'recheckTargetName').url,

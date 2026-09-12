@@ -65,6 +65,9 @@ export function appointmentConflicts(rows: ResultRow[]): ResultRow[] {
             previousAppointment: row.previousAppointmentId || 'Not recorded',
             previousAppointmentStart: row.previousAppointmentStart || '',
             previousAppointmentEnd: row.previousAppointmentEnd || '',
+            verifiedAppointmentStart: row.verifiedAppointmentStart || '',
+            verifiedAppointmentEnd: row.verifiedAppointmentEnd || '',
+            verifiedAppointmentSlot: row.verifiedAppointmentSlot || '',
             outcome:
               row.recoveryStatus === 'Recovery disabled'
                 ? 'Repair not run'
@@ -96,6 +99,8 @@ export function appointmentConflicts(rows: ResultRow[]): ResultRow[] {
                 'waveLinked',
                 'waveReused',
                 'appointmentMoved',
+                'appointmentVerified',
+                'appointmentReused',
               ].map((key) => [
                 key,
                 typeof row[key] === 'boolean'
