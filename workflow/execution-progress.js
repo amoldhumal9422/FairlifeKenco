@@ -113,19 +113,32 @@ export function executionProgress(
     if (phase.startsWith('verifyFinal')) {
       percent = 90;
       stage = 'Verify the final links and appointment';
+    } else if (latest?.audit?.appointmentVerified) {
+      percent = 85;
+      stage = 'Recheck allocation and links after the appointment';
     } else if (
-      latest?.audit?.appointmentVerified ||
+      /^(moveAppointment|verifyMovedAppointment|verifyMovedLoad)$/.test(phase)
+    ) {
+      percent = 80;
+      stage = 'Move or verify the existing appointment';
+    } else if (latest?.audit?.waveCreated || latest?.audit?.waveLinked) {
+      percent = 70;
+      stage = 'Verify the wave before the appointment';
+    } else if (
       /^(createWave|pollCreateWave|verifyCreatedWaves|appointmentBeforeWave|loadBeforeWave)$/.test(
         phase,
       )
     ) {
-      percent = 70;
-      stage = 'Create or verify the wave';
+      percent = 55;
+      stage = 'Create or verify the intended wave';
     } else if (
-      /^(moveAppointment|verifyMovedAppointment|verifyMovedLoad)$/.test(phase)
+      /^(replaceOldWave|pollReplaceWave|verifyOldLoadWaves|verifyOldShipmentWaves|oldWaveName)$/.test(
+        phase,
+      ) ||
+      latest?.audit?.waveDeleted
     ) {
-      percent = 50;
-      stage = 'Move or verify the existing appointment';
+      percent = 40;
+      stage = 'Remove and verify the old unallocated wave';
     } else if (latest) {
       percent = 25;
       stage = 'Check allocation and ownership';

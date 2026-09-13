@@ -31,6 +31,12 @@ const REPAIR_PHASES = {
   recheckTargetName: 'Checking for a duplicate wave',
   recheckWave: 'Rechecking allocation',
   recheckPicks: 'Rechecking wave picks',
+  recheckWaveLoads: 'Rechecking wave ownership',
+  replaceOldWave: 'Deleting the old unallocated wave',
+  pollReplaceWave: 'Waiting for old wave deletion',
+  verifyOldLoadWaves: 'Verifying the old load wave was removed',
+  verifyOldShipmentWaves: 'Verifying the old shipment wave was removed',
+  oldWaveName: 'Verifying the old wave no longer exists',
   appointmentBeforeWave: 'Verifying the appointment before wave creation',
   loadBeforeWave: 'Verifying the assignment before wave creation',
   createWave: 'Creating and linking the saved wave',
@@ -114,8 +120,8 @@ function repairAppMatches(s, a, id) {
     a.resourceId === id &&
     a.carrierMoveId === s.row.carMoveId &&
     a.warehouseId === 'AZ02' &&
-    a.appointmentType === 'S' &&
-    a.trailerCode === 'SHIP'
+    (!a.appointmentType || a.appointmentType === 'S') &&
+    (!a.trailerCode || a.trailerCode === 'SHIP')
   );
 }
 function repairAppSafe(a) {
@@ -143,6 +149,8 @@ function repairAppFingerprint(a) {
     a.endDate,
     a.slotId,
     a.carrierCode,
+    a.appointmentType,
+    a.trailerCode,
     a.version,
     a.dateLastModified,
     a.dispatch,
@@ -190,14 +198,15 @@ function repairAppTimeMatches(s, a) {
   return (
     Date.parse(a.startDate) === Date.parse(s.row.startIso) &&
     Date.parse(a.endDate) === Date.parse(s.row.endIso) &&
-    a.slotId === s.row.slotId
+    a.slotId === s.row.slotId &&
+    a.carrierCode === s.row.carcod &&
+    a.appointmentType === 'S' &&
+    a.trailerCode === 'SHIP'
   );
 }
 function repairReady(s) {
-  if (!s.audit.appointmentVerified) {
-    s.phase = repairAppTimeMatches(s, s.appointment)
-      ? 'verifyMovedAppointment'
-      : 'moveAppointment';
+  if (s.waveMode === 'replace') {
+    s.phase = 'replaceOldWave';
     return s;
   }
   if (s.waveMode === 'create') {
@@ -208,7 +217,11 @@ function repairReady(s) {
   s.audit.verifiedWave = s.row.schbat;
   s.audit.waveCreated = !!s.createdWavePending;
   s.audit.waveReused = !s.createdWavePending;
-  s.phase = 'verifyFinalAppointment';
+  s.phase = s.audit.appointmentVerified
+    ? 'verifyFinalAppointment'
+    : repairAppTimeMatches(s, s.appointment)
+      ? 'verifyMovedAppointment'
+      : 'moveAppointment';
   return s;
 }
 function repairWaveSafe(s, w) {
@@ -373,6 +386,7 @@ export function startRepair(run, q, now = Date.now()) {
       appointmentVerified: false,
       appointmentReused: false,
       waveDeleted: false,
+      waveDeleteAttempted: false,
       appointmentDeleted: false,
       appointmentRecreated: false,
       repairWriteAttempted: false,
@@ -441,6 +455,7 @@ export function planRepair(input, now = Date.now()) {
       request = get(withSite(apptPath));
       break;
     case 'waves':
+    case 'verifyOldLoadWaves':
     case 'recheckWaves':
     case 'verifyCreatedWaves':
     case 'verifyFinalWaves':
@@ -448,11 +463,15 @@ export function planRepair(input, now = Date.now()) {
       break;
     case 'targetName':
     case 'recheckTargetName':
+    case 'oldWaveName':
       request = get(
         withSite(
           REPAIR_BASE +
             '/waves?query=' +
-            query('waveNumber', s.row.schbat) +
+            query(
+              'waveNumber',
+              s.phase === 'oldWaveName' ? s.audit.previousWave : s.row.schbat,
+            ) +
             '&offset=0&limit=2',
         ),
       );
@@ -469,24 +488,32 @@ export function planRepair(input, now = Date.now()) {
       );
       break;
     case 'waveLoads':
-      request = get(withSite(wavePath + '/outboundLoads?offset=0&limit=2'));
+    case 'recheckWaveLoads':
+      request = get(
+        withSite(wavePath + '/outboundLoads?warehouseId=AZ02&offset=0&limit=2'),
+      );
       break;
     case 'picks':
     case 'recheckPicks':
-      request = get(withSite(wavePath + '/picks?offset=0&limit=1'));
+      request = get(
+        withSite(wavePath + '/picks?warehouseId=AZ02&offset=0&limit=1'),
+      );
       break;
     case 'shipment':
     case 'recheckShipment':
       request = get(withSite(shipmentPath));
       break;
     case 'shipmentWaves':
+    case 'verifyOldShipmentWaves':
     case 'recheckShipmentWaves':
     case 'verifyFinalShipmentWaves':
       request = get(withSite(shipmentPath + '/waves?warehouseId=AZ02'));
       break;
     case 'loadPicks':
     case 'recheckLoadPicks':
-      request = get(withSite(loadPath + '/picks?offset=0&limit=1'));
+      request = get(
+        withSite(loadPath + '/picks?warehouseId=AZ02&offset=0&limit=1'),
+      );
       break;
     case 'wavableLines':
       request = get(
@@ -498,7 +525,16 @@ export function planRepair(input, now = Date.now()) {
       );
       break;
     case 'pollCreateWave':
+    case 'pollReplaceWave':
       request = get(s.pollUrl);
+      break;
+    case 'replaceOldWave':
+      route = 4;
+      request = {
+        method: 'PUT',
+        url: withSite(REPAIR_BASE + '/waves/cancelWave/async?warehouseId=AZ02'),
+        body: { ...s.wave, warehouseId: 'AZ02', waveNumber: s.waveNumber },
+      };
       break;
     case 'createWave':
       route = 2;
@@ -526,6 +562,10 @@ export function planRepair(input, now = Date.now()) {
         url: withSite(apptPath + '?ignoreWarnings=false'),
         body: {
           ...s.appointment,
+          appointmentType: 'S',
+          trailerCode: 'SHIP',
+          carrierCode: s.row.carcod,
+          scacCode: s.row.carcod,
           startDate: s.row.startIso,
           endDate: s.row.endIso,
           slotId: s.row.slotId,
@@ -564,8 +604,6 @@ export function planRepair(input, now = Date.now()) {
     if (
       route === 2 &&
       (s.waveMode !== 'create' ||
-        !s.audit.appointmentVerified ||
-        !repairAppTimeMatches(s, s.appointment) ||
         !s.targetNameAbsent ||
         !s.emptyWavesVerified ||
         !s.wavableVerified)
@@ -575,14 +613,25 @@ export function planRepair(input, now = Date.now()) {
       route === 3 &&
       (s.audit.appointmentVerified ||
         s.audit.appointmentMoveAttempted ||
-        (s.waveMode === 'create'
-          ? !s.targetNameAbsent || !s.emptyWavesVerified || !s.wavableVerified
-          : s.waveMode !== 'reuse' ||
-            s.waveNumber !== s.row.schbat ||
-            !s.picksVerified ||
-            repairWaveSafe(s, s.wave)))
+        !s.audit.waveLinked ||
+        s.waveMode !== 'reuse' ||
+        s.waveNumber !== s.row.schbat ||
+        !s.picksVerified ||
+        repairWaveSafe(s, s.wave))
     )
       throw new Error('Appointment movement safeguards are incomplete.');
+    if (
+      route === 4 &&
+      (s.waveMode !== 'replace' ||
+        s.waveNumber === s.row.schbat ||
+        s.audit.waveDeleteAttempted ||
+        !s.targetNameAbsent ||
+        !s.picksVerified ||
+        !s.waveOwnershipVerified ||
+        repairWaveSafe(s, s.wave))
+    )
+      throw new Error('Old wave deletion safeguards are incomplete.');
+    if (route === 4) s.audit.waveDeleteAttempted = true;
     if (route === 3) s.audit.appointmentMoveAttempted = true;
     s.audit.repairWriteAttempted = true;
     s.audit.lastWriteStage = s.phase;
@@ -610,11 +659,15 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       s.audit.repairWriteAttempted
         ? 'Manual review required'
         : 'Protected — left unchanged',
-      (s.audit.appointmentVerified && !s.audit.waveLinked
-        ? 'Appointment ' +
-          s.audit.previousAppointmentId +
-          ' was verified at the requested time. '
-        : '') + note,
+      (s.audit.waveDeleted && !s.audit.waveCreated
+        ? 'The old unallocated wave was deleted. Its replacement is not confirmed. '
+        : s.audit.waveLinked && !s.audit.appointmentVerified
+          ? 'The intended wave and its links were verified. The appointment update is not confirmed. '
+          : s.audit.appointmentVerified && !s.audit.waveLinked
+            ? 'Appointment ' +
+              s.audit.previousAppointmentId +
+              ' was verified at the requested time. '
+            : '') + note,
       s.audit.repairWriteAttempted,
     );
   if (s.phase === 'moveAppointment' && r.status === 204) {
@@ -675,6 +728,8 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       s.appointmentFingerprint = repairAppFingerprint(obj);
       s.audit.previousAppointmentStart = obj.startDate;
       s.audit.previousAppointmentEnd = obj.endDate;
+      s.audit.previousCarrier = obj.carrierCode || '';
+      s.audit.previousTrailerCode = obj.trailerCode || '';
       s.phase = 'waves';
       break;
     case 'waves':
@@ -697,7 +752,7 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       } else {
         s.waveNumber = list[0].waveNumber;
         s.audit.previousWave = s.waveNumber;
-        s.waveMode = 'reuse';
+        s.waveMode = s.waveNumber === s.row.schbat ? 'reuse' : 'replace';
         s.phase = 'wave';
       }
       break;
@@ -714,28 +769,33 @@ export function applyRepairResponse(input, response, now = Date.now()) {
     case 'wave': {
       const reason = repairWaveSafe(s, obj);
       if (reason) return stop(reason);
-      if (s.waveNumber !== s.row.schbat)
-        return stop(
-          'The linked wave name differs from the saved wave name. Review the naming and shipment plan manually; no wave is automatically deleted or renamed.',
-        );
       s.wave = obj;
       s.phase = 'waveLoads';
       break;
     }
     case 'waveLoads':
+    case 'recheckWaveLoads':
       if (
         !list ||
         list.length !== 1 ||
         !repairLoadMatches(s, list[0], s.audit.previousAppointmentId)
       )
         return stop('The wave is shared or its load association changed.');
+      s.waveOwnershipVerified = true;
+      if (s.phase === 'recheckWaveLoads') {
+        if (s.waveMode === 'replace') {
+          s.phase = 'recheckTargetName';
+          break;
+        }
+        return repairReady(s);
+      }
       s.phase = 'picks';
       break;
     case 'picks':
       if (!list || list.length !== 0)
         return stop('Wave pick work could not be confirmed as empty.');
       s.picksVerified = true;
-      s.phase = 'shipment';
+      s.phase = s.waveMode === 'replace' ? 'targetName' : 'shipment';
       break;
     case 'shipment':
     case 'recheckShipment':
@@ -830,7 +890,67 @@ export function applyRepairResponse(input, response, now = Date.now()) {
         return stop(
           'Pick work appeared during inspection. No further changes were sent.',
         );
-      return repairReady(s);
+      s.phase = 'recheckWaveLoads';
+      break;
+    case 'replaceOldWave': {
+      const uri = obj?.asynchronousResources_uri;
+      if (
+        typeof uri !== 'string' ||
+        !uri.startsWith(REPAIR_BASE + '/waves/cancelWave/async/') ||
+        !/^https:\/\/[^?#]+(?:\?[^#]*)?$/.test(uri) ||
+        /[\r\n]/.test(uri)
+      )
+        return stop(
+          'Old wave deletion was submitted but its tracking address could not be verified.',
+        );
+      s.pollUrl = uri;
+      s.pollCount = 0;
+      s.phase = 'pollReplaceWave';
+      break;
+    }
+    case 'pollReplaceWave':
+      if (!list || list.length !== 1)
+        return stop(
+          'Old wave deletion returned an unexpected tracking response.',
+        );
+      if (list[0].asynchronousStatus === 'COMPLETE')
+        s.phase = 'verifyOldLoadWaves';
+      else if (list[0].asynchronousStatus === 'FAILURE' || ++s.pollCount >= 30)
+        return stop(
+          'Old wave deletion did not finish successfully. No replacement or appointment update was sent.',
+        );
+      break;
+    case 'verifyOldLoadWaves':
+    case 'verifyOldShipmentWaves':
+      if (!repairWaveList(list, ''))
+        return stop(
+          'The old wave is still linked or another wave appeared. No further changes were sent.',
+        );
+      s.phase =
+        s.phase === 'verifyOldLoadWaves'
+          ? 'verifyOldShipmentWaves'
+          : 'oldWaveName';
+      break;
+    case 'oldWaveName':
+      if (!list || list.length)
+        return stop(
+          'The old wave is still present or its deletion could not be verified.',
+        );
+      s.audit.waveDeleted = true;
+      s.audit.waveDeletedAt = new Date(now).toISOString();
+      s.waveMode = 'create';
+      s.waveNumber = s.row.schbat;
+      s.targetNameAbsent = false;
+      s.emptyWavesVerified = false;
+      s.wavableVerified = false;
+      s.loadVerified = false;
+      s.shipmentVerified = false;
+      s.appointmentVerified = false;
+      s.shipmentWavesVerified = false;
+      s.loadPicksVerified = false;
+      s.picksVerified = false;
+      s.phase = 'targetName';
+      break;
     case 'createWave': {
       const uri = obj?.asynchronousResources_uri,
         prefix = REPAIR_BASE + '/waves/planWave/async/';
@@ -857,7 +977,7 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       if (status === 'COMPLETE') s.phase = 'verifyCreatedWaves';
       else if (status === 'FAILURE' || ++s.pollCount >= 30)
         return stop(
-          'Wave creation did not finish successfully. Review the verified appointment and wave result before taking further action.',
+          'Wave creation did not finish successfully. The appointment was not moved. Review the wave result before taking further action.',
         );
       break;
     }
@@ -867,6 +987,7 @@ export function applyRepairResponse(input, response, now = Date.now()) {
           'Wave creation completed, but the saved wave was not uniquely linked to this load.',
         );
       s.createdWavePending = true;
+      s.audit.waveCreated = true;
       s.waveMode = 'reuse';
       s.waveNumber = s.row.schbat;
       s.loadVerified = false;
@@ -910,6 +1031,8 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       s.audit.verifiedAppointmentStart = s.appointment.startDate;
       s.audit.verifiedAppointmentEnd = s.appointment.endDate;
       s.audit.verifiedAppointmentSlot = s.appointment.slotId;
+      s.audit.verifiedCarrier = s.appointment.carrierCode;
+      s.audit.verifiedTrailerCode = s.appointment.trailerCode;
       s.audit.appointmentVerifiedAt = new Date(now).toISOString();
       s.loadVerified = false;
       s.appointmentVerified = false;
@@ -927,7 +1050,8 @@ export function applyRepairResponse(input, response, now = Date.now()) {
       if (
         !repairAppMatches(s, obj, s.audit.previousAppointmentId) ||
         !repairAppSafe(obj) ||
-        !repairAppTimeMatches(s, obj) ||
+        (s.phase === 'verifyFinalAppointment' &&
+          !repairAppTimeMatches(s, obj)) ||
         repairAppFingerprint(obj) !== s.appointmentFingerprint
       )
         return stop(

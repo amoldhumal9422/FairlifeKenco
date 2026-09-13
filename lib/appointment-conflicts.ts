@@ -68,6 +68,8 @@ export function appointmentConflicts(rows: ResultRow[]): ResultRow[] {
             verifiedAppointmentStart: row.verifiedAppointmentStart || '',
             verifiedAppointmentEnd: row.verifiedAppointmentEnd || '',
             verifiedAppointmentSlot: row.verifiedAppointmentSlot || '',
+            verifiedCarrier: row.verifiedCarrier || '',
+            verifiedTrailerCode: row.verifiedTrailerCode || '',
             outcome:
               row.recoveryStatus === 'Recovery disabled'
                 ? 'Repair not run'

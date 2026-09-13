@@ -65,6 +65,7 @@ type Summary = {
   skipped?: number;
   wavesCreated?: number;
   inboundAppointments?: number;
+  unlinkedInboundAppointments?: number;
   results?: Row[];
   skippedRows?: Row[];
   error?: string;
@@ -559,6 +560,9 @@ export default function WaveBot({
   const activeRuns = runs.filter((r) => canStopRun(r.status));
   const resultRows = selected?.summary.results || [];
   const conflictRows = appointmentConflicts(resultRows);
+  const unlinkedInbounds = resultRows.filter(
+    (r) => r.inboundUnlinked && r.appointmentId,
+  );
   const reviewedCount = number(selected?.metadata.readyRows),
     totalCount = number(selected?.metadata.rowCount);
   const reviewRows = Array.isArray(selected?.metadata.reviewRows)
@@ -835,13 +839,25 @@ export default function WaveBot({
               <h3>Conflicting appointments</h3>
               <p>
                 Review the affected load before confirming a repair. Allocated
-                or active work stays protected. The repair verifies or moves the
-                existing appointment first, then creates or verifies the
-                intended wave.
+                or active work stays protected. The repair reuses the correct
+                wave, creates it if missing, or replaces a different unallocated
+                wave after checking that it belongs only to this load and
+                shipment.
               </p>
               <p>
-                Different or uncertain links require manual review. No automatic
-                wave deletion or appointment recreation.
+                Once the wave is verified, it moves the existing appointment to
+                the saved time and door group and verifies the carrier and
+                shipping type. The appointment ID is kept.
+              </p>
+            </section>
+            <section>
+              <h3>Inbound reference not found</h3>
+              <p>
+                For a missing 311, 660 or ITRN reference, the bot creates a
+                receiving appointment with the reference in its notes. It checks
+                for an earlier matching bot appointment first. These
+                appointments appear under Inbounds to link so you can link the
+                load when it becomes available in Blue Yonder.
               </p>
             </section>
           </div>
@@ -1401,6 +1417,13 @@ export default function WaveBot({
                                       <br />
                                       Door group: {row.verifiedAppointmentSlot}
                                       <br />
+                                      Carrier:{' '}
+                                      {row.verifiedCarrier ||
+                                        'Not recorded'} ·
+                                      Type:{' '}
+                                      {row.verifiedTrailerCode ||
+                                        'Not recorded'}
+                                      <br />
                                     </>
                                   )}
                                   Wave created: {row.waveCreated}
@@ -1492,6 +1515,51 @@ export default function WaveBot({
                             </div>
                           ))}
                         </div>
+                        {!!unlinkedInbounds.length && (
+                          <section
+                            className="skipped-results"
+                            aria-label="Inbounds to link"
+                          >
+                            <div className="table-toolbar">
+                              <h3>
+                                Inbounds to link · {unlinkedInbounds.length}
+                              </h3>
+                              <Button
+                                variant="outline"
+                                onClick={() =>
+                                  csv(
+                                    unlinkedInbounds,
+                                    `wave-run-${selected.runId}-inbounds-to-link.csv`,
+                                  )
+                                }
+                              >
+                                <Download /> Export inbound list
+                              </Button>
+                            </div>
+                            <p>
+                              Check these appointments in Blue Yonder and link
+                              the inbound load when it is available. These are
+                              saved run results.
+                            </p>
+                            {unlinkedInbounds.map((r, i) => (
+                              <div key={i}>
+                                <strong>
+                                  {r.inboundReference || r.ordnum} ·{' '}
+                                  {r.appointmentId}
+                                </strong>
+                                <span>
+                                  {time(String(r.startIso))} · {r.carcod} ·{' '}
+                                  {r.slotId}
+                                </span>
+                                <span>
+                                  {r.appointmentVerified
+                                    ? 'Appointment verified · Needs load link'
+                                    : 'Appointment submitted · Verify before retrying'}
+                                </span>
+                              </div>
+                            ))}
+                          </section>
+                        )}
                         <div className="table-toolbar">
                           <h3>Load outcomes</h3>
                           <Button
@@ -1531,7 +1599,11 @@ export default function WaveBot({
                               {resultRows.map((r, i) => (
                                 <TableRow
                                   key={i}
-                                  className={r.ok ? '' : 'row-issue'}
+                                  className={
+                                    r.ok && !r.inboundUnlinked
+                                      ? ''
+                                      : 'row-issue'
+                                  }
                                 >
                                   <TableCell>{r.direction}</TableCell>
                                   <TableCell>{r.ordnum}</TableCell>
@@ -1550,14 +1622,22 @@ export default function WaveBot({
                                     <Step value={r.stepAppointment} />
                                   </TableCell>
                                   <TableCell>
-                                    <Step
-                                      value={
-                                        r.direction === 'IB'
-                                          ? r.stepLink
-                                          : r.stepWave
-                                      }
-                                      error={r.waveError || r.linkError}
-                                    />
+                                    {r.inboundUnlinked ? (
+                                      <span className="text-amber-700">
+                                        {r.appointmentId
+                                          ? 'Needs load link'
+                                          : 'Not linked'}
+                                      </span>
+                                    ) : (
+                                      <Step
+                                        value={
+                                          r.direction === 'IB'
+                                            ? r.stepLink
+                                            : r.stepWave
+                                        }
+                                        error={r.waveError || r.linkError}
+                                      />
+                                    )}
                                   </TableCell>
                                   <TableCell className="result-notes">
                                     {[
@@ -1568,6 +1648,7 @@ export default function WaveBot({
                                       r.waveError,
                                       r.linkError,
                                       r.carrierNote,
+                                      r.inboundNote,
                                       r.shipmentId
                                         ? `Shipment ${r.shipmentId}`
                                         : '',
@@ -1915,10 +1996,10 @@ export default function WaveBot({
         <DialogContent className="decision-dialog" showCloseButton={!busy}>
           <DialogTitle>Repair this appointment in Blue Yonder?</DialogTitle>
           <DialogDescription>
-            This checks allocation and ownership, then reuses or moves the
-            existing appointment to the saved date, time and door group. The
-            appointment and load assignment must be verified before a missing
-            wave is created. Allocated waves stay unchanged.
+            This checks allocation and ownership, then sets up and verifies the
+            saved wave before moving the existing appointment. A different
+            unallocated wave may be deleted and replaced. Allocated or active
+            work stays unchanged.
           </DialogDescription>
           <div className="decision-file">
             <Truck />
@@ -1936,15 +2017,16 @@ export default function WaveBot({
             </div>
           </div>
           <p>
-            The appointment ID is kept. A correct appointment needs no update.
-            The saved wave is then created if missing or reused if correctly
-            linked. A different wave name stops for manual review; no wave or
-            appointment is automatically deleted.
+            The appointment ID and load association are kept. After the wave is
+            verified, the bot checks the appointment date, time, door group,
+            carrier and shipping type, and updates them if needed. Shared waves
+            or uncertain links stop for manual review.
           </p>
           <p>
-            If the appointment update fails, no wave is created. If wave setup
-            fails after the appointment is verified, the recorded result shows
-            that partial completion and requires manual review.
+            If wave setup fails, the appointment is left unchanged. If the
+            appointment update fails afterward, the wave changes remain
+            recorded. Review any partial result before another attempt; there is
+            no automatic rollback.
           </p>
           {error && (
             <p className="inline-error" role="alert">

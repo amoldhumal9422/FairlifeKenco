@@ -71,7 +71,7 @@ test('all rows processed is not a finished run before results are saved', () => 
   assert.equal(p.percent, 90);
   assert.notEqual(p.percent, 100);
 });
-test('repair percentage reflects verified appointment then wave steps', () => {
+test('repair percentage reflects wave setup before appointment movement', () => {
   const p = executionProgress(
     { status: 'repairing' },
     execution({
@@ -79,7 +79,7 @@ test('repair percentage reflects verified appointment then wave steps', () => {
         task([
           {
             phase: 'createWave',
-            audit: { appointmentVerified: true },
+            audit: { waveDeleted: true },
             headers: { Authorization: 'SECRET' },
           },
         ]),
@@ -88,10 +88,30 @@ test('repair percentage reflects verified appointment then wave steps', () => {
     now,
   );
   assert.equal(p.mode, 'repair');
-  assert.equal(p.percent, 70);
-  assert.equal(p.stage, 'Create or verify the wave');
+  assert.equal(p.percent, 55);
+  assert.equal(p.stage, 'Create or verify the intended wave');
   assert.ok(!JSON.stringify(p).includes('SECRET'));
 });
+test('repair progress advances through deletion, wave creation and appointment verification', () => {
+  const states = [
+    ['replaceOldWave', {}, 40],
+    ['createWave', { waveDeleted: true }, 55],
+    ['wave', { waveCreated: true }, 70],
+    ['moveAppointment', { waveLinked: true }, 80],
+    ['wave', { waveLinked: true, appointmentVerified: true }, 85],
+    ['verifyFinalWaves', { appointmentVerified: true }, 90],
+    ['done', { appointmentVerified: true }, 95],
+  ];
+  for (const [phase, audit, percent] of states) {
+    const p = executionProgress(
+      { status: 'repairing' },
+      execution({ 'Plan Repair Request': [task([{ phase, audit }])] }),
+      now,
+    );
+    assert.equal(p.percent, percent, phase);
+  }
+});
+
 test('only safe progress fields reach the website through sync', () => {
   const row = {
     runId: '100',
