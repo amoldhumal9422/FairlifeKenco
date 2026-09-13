@@ -28,12 +28,51 @@ function inboundStop(row, reason) {
     ...row,
     inboundFound: false,
     shouldCreate: false,
+    notesReady: false,
+    shouldSaveNotes: false,
+    notesVerified: false,
     ok: false,
     reason,
     manualReviewRequired: true,
     _inboundStandaloneResult: true,
   };
 }
+function compactInboundKey(reference, startIso, warehouseId) {
+  // Keep the database reference short; full identity is verified from the notes and appointment fields.
+  const identity =
+    warehouseId + '|' + reference + '|' + new Date(startIso).toISOString();
+  let hash = 14695981039346656037n;
+  for (const char of identity) {
+    hash = BigInt.asUintN(
+      64,
+      (hash ^ BigInt(char.charCodeAt(0))) * 1099511628211n,
+    );
+  }
+  return 'IB' + (hash % 36n ** 8n).toString(36).toUpperCase().padStart(8, '0');
+}
+
+export function inboundWarningCanOverride(response) {
+  if (Number(response?.statusCode) !== 422) return false;
+  let body = response.body ?? response.data;
+  try {
+    if (typeof body === 'string') body = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  const errors = body?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.length > 0 &&
+    errors.every(
+      (error) =>
+        !/^\s*-\d+\s*$/.test(String(error.errorCode ?? '')) &&
+        !/load has been assigned to another appoi(?:nt|t)ment|String or binary data would be truncated/i.test(
+          String(error.userMessage || error.message || ''),
+        ),
+    )
+  );
+}
+
 export function prepareInbound(row, response, cfg) {
   const r = { ...row, inboundFound: false, inboundUnlinked: false };
   const result = inboundResponse(response);
@@ -159,19 +198,10 @@ export function prepareInbound(row, response, cfg) {
   }
   r.inboundUnlinked = true;
   r.inboundReference = ref;
-  r.inboundNote =
-    'Inbound reference: ' + ref + '. Not in system when appointment was made.';
+  r.inboundNote = ref + '\nnot in system when appointment was made';
   r.manualReviewRequired = true;
   const keyRef = ref.replace(/^0(311\d{6})$/, '$1');
-  r.inboundAppointmentKey =
-    'IB-' +
-    keyRef +
-    '-' +
-    new Date(r.startIso)
-      .toISOString()
-      .replace(/[^0-9]/g, '')
-      .slice(0, 14);
-  r.apptBody.noteText = r.inboundNote;
+  r.inboundAppointmentKey = compactInboundKey(keyRef, r.startIso, r.whId);
   r.apptBody.externalAppointmentId = r.inboundAppointmentKey;
   const query = [
     {
@@ -207,7 +237,6 @@ function unlinkedMatches(r, a) {
     Date.parse(a.startDate) === Date.parse(r.startIso) &&
     Date.parse(a.endDate) === Date.parse(r.endIso) &&
     a.externalAppointmentId === r.inboundAppointmentKey &&
-    a.noteText === r.inboundNote &&
     !a.masterReceiptId &&
     !a.carrierMoveId &&
     !a.trailerId &&
@@ -246,12 +275,12 @@ export function checkUnlinkedInbound(row, response) {
     shouldCreate: false,
     appointmentId: list[0].appointmentId,
     appointmentReused: true,
-    appointmentVerified: true,
+    appointmentVerified: false,
     stepAppointment: 200,
     stepLink: 0,
-    ok: true,
+    ok: false,
     reason:
-      'Existing unlinked receiving appointment verified. Link the inbound load manually when available.',
+      'Matching appointment found; its current details and reference notes still need verification.',
     _inboundStandaloneResult: true,
   };
 }
@@ -263,13 +292,73 @@ export function verifyUnlinkedInbound(row, response) {
   if (!a || a.appointmentId !== r.appointmentId || !unlinkedMatches(r, a))
     return inboundStop(
       r,
-      'An inbound appointment was submitted but its ID, reference notes, date, carrier or unlinked status could not be verified. Check Blue Yonder before retrying.',
+      'An inbound appointment exists but its ID, date, carrier or unlinked status could not be verified. Check Blue Yonder before retrying.',
     );
   r.appointmentVerified = true;
-  r.ok = true;
+  r.notesReady = true;
+  r.ok = false;
   r.reason =
-    'Receiving appointment created without an inbound load link. Reference is in the appointment notes; link the load manually when available.';
+    'Appointment details verified; reference notes still need verification.';
   return r;
+}
+
+export function planInboundNotes(row, response, allowSave = true) {
+  const r = { ...row, shouldSaveNotes: false, notesVerified: false, ok: false };
+  const result = inboundResponse(response);
+  const notes = result.body?.data;
+  if (
+    !r.inboundUnlinked ||
+    !r.appointmentVerified ||
+    !r.notesReady ||
+    !r.appointmentId ||
+    !r.inboundNote ||
+    !result.ok ||
+    !Array.isArray(notes) ||
+    notes.length > 1 ||
+    (result.body.totalCount !== undefined &&
+      result.body.totalCount !== notes.length) ||
+    notes.some((note) => note.appointmentId !== r.appointmentId)
+  )
+    return inboundStop(
+      r,
+      'The appointment reference notes could not be verified. Check Blue Yonder before retrying.',
+    );
+
+  if (notes.length === 1 && notes[0].noteText === r.inboundNote) {
+    r.notesVerified = true;
+    r.ok = true;
+    r.reason =
+      (r.appointmentReused
+        ? 'Existing receiving appointment'
+        : 'Receiving appointment created') +
+      ' without an inbound load link. Reference verified in Appointment Notes; link the load manually when available.';
+    return r;
+  }
+  if (
+    allowSave &&
+    !r.appointmentReused &&
+    !notes.length &&
+    r.stepAppointment >= 200 &&
+    r.stepAppointment < 300
+  ) {
+    r.shouldSaveNotes = true;
+    r.noteBody = { appointmentId: r.appointmentId, noteText: r.inboundNote };
+    return r;
+  }
+  return inboundStop(
+    r,
+    'The existing appointment notes are missing or differ from the requested reference. No notes were overwritten. Review this appointment manually.',
+  );
+}
+
+export function verifyInboundNotes(row, response, saveResponse) {
+  const saved = inboundResponse(saveResponse);
+  if (saved.status < 200 || saved.status >= 300 || saved.body?.errors)
+    return inboundStop(
+      row,
+      'The appointment exists, but saving its reference notes was not confirmed. Check Blue Yonder before retrying.',
+    );
+  return planInboundNotes(row, response, false);
 }
 export function recordInboundResult(row, response) {
   const r = { ...row };
@@ -301,6 +390,9 @@ export function recordInboundResult(row, response) {
     'inboundLookupUrl',
     'lookupUrl',
     'inboundDuplicateUrl',
+    'noteBody',
+    'notesReady',
+    'shouldSaveNotes',
     '_inboundStandaloneResult',
   ])
     delete r[key];
