@@ -26,7 +26,6 @@ import {
   Layers,
   ShieldCheck,
   Activity,
-  Play,
   RefreshCw,
   Download,
   Check,
@@ -47,6 +46,7 @@ import { canStopRun, canDiscardRun } from '@/lib/run-controls';
 import WaveAnalytics from './wave-analytics';
 import RunMonitor from './run-monitor';
 import ReviewCleanup from './review-cleanup';
+import PrepareFile from './prepare-file';
 import {
   displayProgress,
   filterRuns,
@@ -419,7 +419,7 @@ export default function WaveBot({
             : action === 'discard'
               ? 'File removed from the review queue. Its history is retained.'
               : action === 'generate'
-                ? 'Preparing the wave file. It will wait here for approval.'
+                ? `Preparing the wave file for ${date(String(extras.planDate))}. It will wait here for approval.`
                 : action === 'reject'
                   ? 'File rejected. Choose a replacement workbook below.'
                   : action === 'repair'
@@ -652,7 +652,7 @@ export default function WaveBot({
           <div>
             <h1>Wave Bot</h1>
             <p className="muted">
-              Prepare tomorrow’s file, review the loads, and control each run.
+              Choose an appointment date, review the loads, and control each run.
             </p>
           </div>
           <div className="heading-actions">
@@ -689,25 +689,18 @@ export default function WaveBot({
             >
               <Trash2 /> Clear old review files
             </Button>
-            <Button
-              className="primary-action"
-              onClick={() => void perform('generate')}
-              disabled={
-                (readOnly && !allowPreparation) ||
-                !!busy ||
-                !viewer ||
-                runs.some((r) => r.status === 'generating')
-              }
-            >
-              {busy === 'generate' ? (
-                <LoaderCircle className="spin" />
-              ) : (
-                <Play />
-              )}{' '}
-              Prepare file
-            </Button>
           </div>
         </div>
+        <PrepareFile
+          busy={busy === 'generate'}
+          disabled={
+            (readOnly && !allowPreparation) ||
+            !!busy ||
+            !viewer ||
+            runs.some((r) => r.status === 'generating')
+          }
+          onPrepare={(planDate) => void perform('generate', { planDate })}
+        />
         {readOnly && viewer && (
           <output className="notice setup">
             <ShieldCheck />
@@ -806,8 +799,9 @@ export default function WaveBot({
               <h3>Prepare → Review → Run</h3>
               <p>
                 Prepare file gathers SharePoint orders and OpenDock appointments
-                for tomorrow in Arizona. Download and review the workbook, then
-                approve it or reject it and upload a replacement.
+                for your selected date in Arizona (tomorrow by default). Download
+                and review the workbook, then approve it or reject it and upload
+                a replacement.
               </p>
               <p>
                 Production begins only when you approve or submit a replacement.
@@ -929,7 +923,7 @@ export default function WaveBot({
                 <h3>No files waiting</h3>
                 <p>
                   Prepare a wave file to pull the latest SharePoint and OpenDock
-                  data for tomorrow.
+                  data for your selected appointment date.
                 </p>
               </div>
             ) : (
