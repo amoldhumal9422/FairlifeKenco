@@ -2,6 +2,8 @@
 
 Wave Bot is the review dashboard for fairlife Arizona wave operations. Prepare a workbook from SharePoint and OpenDock, review it, then approve it or upload a replacement. Once connected to the production backend, the dashboard records decisions and displays Blue Yonder results.
 
+Choose the **OpenDock appointment date** beside **Prepare file** to prepare today or any future day, including Sunday. Tomorrow in Arizona is selected by default. The query covers midnight through the next midnight in the warehouse timezone, and the workbook appointment dates and wave names use that selected day. The worksheet and filename keep their existing preparation-day naming convention. Preparation still waits for approval before Blue Yonder processing.
+
 ## Operator controls
 
 - Each active run shows its own **Stop** button and run ID. Confirming stops that execution; it does not undo completed warehouse changes.
@@ -71,7 +73,7 @@ The n8n endpoint must allow the exact GitHub Pages origin and the `Authorization
 
 - `list`: return the latest runs in `runs`.
 - `detail`: accept `runId` and return the full record in `run`. With `download: true`, include the workbook as `fileBase64` and its `downloadName`. `original: true` selects the original file.
-- `generate`: prepare a new workbook and return its `runId`. The file waits for approval.
+- `generate`: accept optional `planDate` (`YYYY-MM-DD`, today or later in Arizona), prepare a new workbook and return its `runId`. Omitted dates default to tomorrow; invalid or past dates return HTTP 400 before creating a run. The selected date is saved on the run when preparation starts. The file waits for approval.
 - `approve`: accept `runId`, atomically approve a pending file, and begin processing.
 - `reject`: accept `runId` and `reason`, record the rejection, and wait for a replacement.
 - `upload`: accept `runId`, `fileName`, `fileBase64`, and `sheetName`. Validate the replacement before accepting it for production.

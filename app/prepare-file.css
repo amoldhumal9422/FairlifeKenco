@@ -1,0 +1,55 @@
+.preparation-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.preparation-date {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.preparation-date label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.preparation-date label svg {
+  width: 16px;
+  height: 16px;
+  color: var(--primary);
+}
+.preparation-date input {
+  width: 100%;
+  color-scheme: dark;
+}
+.preparation-help {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.preparation-help span {
+  color: var(--muted-foreground);
+}
+.preparation-help [role='alert'] {
+  color: var(--destructive);
+}
+@media (max-width: 600px) {
+  .preparation-date,
+  .preparation-help,
+  .preparation-controls > button {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .preparation-controls {
+    padding: 16px;
+  }
+}
